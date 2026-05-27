@@ -1,0 +1,540 @@
+======================================================================
+AHVF — Crawl Results
+Generated : 2026-05-27T10:14:29.855661 UTC
+Target    : https://csii.in/hrms-lite/#/
+Roles     : User
+======================================================================
+
+SUMMARY
+────────────────────────────────────────
+  Total endpoints captured : 99
+  SPA routes (FR-02.4)     : 0
+  GraphQL schemas (FR-02.5): 0
+  Version BAC flags (FR-02.6): 1
+
+
+──────────────────────────────────────────────────────────────────────
+ROLE: USER
+──────────────────────────────────────────────────────────────────────
+  Endpoints (99):
+
+  --- SOURCE: FORM (1) ---
+  [1] GET    https://csii.in/hrms-lite/#/payslip
+       Role      : User
+       Source    : form
+       Hash      : a397ec5780ea37b0
+       Status    : N/A
+       Form flds : unnamed
+
+  --- SOURCE: NETWORK (DOCUMENT) (46) ---
+  [2] GET    https://csii.in/hrms-lite/
+       Role      : User
+       Source    : network (document)
+       Hash      : a397ec5780ea37b0
+       Status    : 200
+  [3] GET    https://csii.in/
+       Role      : User
+       Source    : network (document)
+       Hash      : cc3511d5926bf24d
+       Status    : 200
+  [4] GET    https://csii.in/index.html
+       Role      : User
+       Source    : network (document)
+       Hash      : c6e28cee2f76b660
+       Status    : 200
+  [5] GET    https://csii.in/about-us.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 75b0e50d9f845cd1
+       Status    : 200
+  [6] GET    https://csii.in/why-csii.html
+       Role      : User
+       Source    : network (document)
+       Hash      : b33f5083edeac848
+       Status    : 200
+  [7] GET    https://csii.in/vision-mission.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 3d048087aa0052b1
+       Status    : 200
+  [8] GET    https://csii.in/our-team.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 1497297d6353943c
+       Status    : 200
+  [9] GET    https://csii.in/awards-and-recognition.html
+       Role      : User
+       Source    : network (document)
+       Hash      : bbc235431e4a8c8a
+       Status    : 200
+  [10] GET    https://csii.in/enquiry.html
+       Role      : User
+       Source    : network (document)
+       Hash      : bea98357872f3b4a
+       Status    : 200
+  [11] GET    https://csii.in/hrms.html
+       Role      : User
+       Source    : network (document)
+       Hash      : cea2b5e073426faa
+       Status    : 200
+  [12] GET    https://csii.in/finance.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 9f801bdccaadc248
+       Status    : 200
+  [13] GET    https://csii.in/project-mangement.html
+       Role      : User
+       Source    : network (document)
+       Hash      : cb5c34cbaae826ad
+       Status    : 200
+  [14] GET    https://csii.in/e-signature.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 46161673b5490915
+       Status    : 200
+  [15] GET    https://csii.in/pin.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 28b14b3fbd2c9c45
+       Status    : 200
+  [16] GET    https://csii.in/talent-acquisition.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 68026eb1cf258c64
+       Status    : 200
+  [17] GET    https://csii.in/asset-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 633667e4c8e99ce8
+       Status    : 200
+  [18] GET    https://csii.in/crm.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 0a45f94e7004f766
+       Status    : 200
+  [19] GET    https://csii.in/helpdesk-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : d4aa6faafbf829c4
+       Status    : 200
+  [20] GET    https://csii.in/performance-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 948e7b6a2c5715bc
+       Status    : 200
+  [21] GET    https://csii.in/task-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 651cecf7ddd7cafe
+       Status    : 200
+  [22] GET    https://csii.in/approval-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 5c3b8b48f162819e
+       Status    : 200
+  [23] GET    https://csii.in/diary-meeting-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : b41e1a42ca666d81
+       Status    : 200
+  [24] GET    https://csii.in/tender-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : d9a9381f5e720952
+       Status    : 200
+  [25] GET    https://csii.in/tuba_tax_estimator.html
+       Role      : User
+       Source    : network (document)
+       Hash      : b3ab1f5412013bbd
+       Status    : 200
+  [26] GET    https://csii.in/building-plan-approval.html
+       Role      : User
+       Source    : network (document)
+       Hash      : ab41ed3a6c3dc7cd
+       Status    : 200
+  [27] GET    https://csii.in/ccms.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 587fba285c513edd
+       Status    : 200
+  [28] GET    https://csii.in/unauthorized-construction.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 02a9d48dd7945119
+       Status    : 200
+  [29] GET    https://csii.in/pgrs.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 02d11b6502f51525
+       Status    : 200
+  [30] GET    https://csii.in/rti.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 812c3e24e8ce004b
+       Status    : 200
+  [31] GET    https://csii.in/property-tax-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : af8aa5d9f478ddf6
+       Status    : 200
+  [32] GET    https://csii.in/water-tax-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 052cf0d39e6e7989
+       Status    : 200
+  [33] GET    https://csii.in/property-mutation-system.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 94e51883a79cac93
+       Status    : 200
+  [34] GET    https://csii.in/marriage-certificate-system.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 7610bfe3a13324af
+       Status    : 200
+  [35] GET    https://csii.in/death-certificate-system.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 60287ed0032d2aaa
+       Status    : 200
+  [36] GET    https://csii.in/birth-certificate-system.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 5e05e580cdf7a754
+       Status    : 200
+  [37] GET    https://csii.in/leased-property-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : dd7ab2641feab3f7
+       Status    : 200
+  [38] GET    https://csii.in/govt-hrms-finance-management.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 568d60111fea62b6
+       Status    : 200
+  [39] GET    https://csii.in/tuba.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 37d3588a07735d36
+       Status    : 200
+  [40] GET    https://csii.in/contact-us.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 344ec77586f8a4a3
+       Status    : 200
+  [41] GET    https://csii.in/book-demo.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 8ca93231f16f1a14
+       Status    : 200
+  [42] GET    https://csii.in/tuba-biometric.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 96007ccd9818d468
+       Status    : 200
+  [43] GET    https://csii.in/tuba-sme-erp.html
+       Role      : User
+       Source    : network (document)
+       Hash      : e7c1c79eee656636
+       Status    : 200
+  [44] GET    https://csii.in/digital-marketing.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 86633a2b31cccf6b
+       Status    : 200
+  [45] GET    https://csii.in/career.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 145c1db8a8957514
+       Status    : 200
+  [46] GET    https://csii.in/terms-and-conditions.html
+       Role      : User
+       Source    : network (document)
+       Hash      : 867354bb5c523d88
+       Status    : 200
+  [47] GET    https://csii.in/privacy-policy.html
+       Role      : User
+       Source    : network (document)
+       Hash      : a796fe3121749264
+       Status    : 200
+
+  --- SOURCE: NETWORK (FETCH) (10) ---
+  [48] POST   https://csii.in/hrms-lite/
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 9feec609da3cec7e
+       Status    : 405
+  [49] GET    https://csii.in/swagger.json
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 21418c83ecd61705
+       Status    : 404
+  [50] GET    https://csii.in/api-docs
+       Role      : User
+       Source    : network (fetch)
+       Hash      : d7f2c26e2ba3c848
+       Status    : 404
+  [51] GET    https://csii.in/v1/api-docs
+       Role      : User
+       Source    : network (fetch)
+       Hash      : a5d2d7cc7e0b35c7
+       Status    : 404
+  [52] GET    https://csii.in/v2/api-docs
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 7043e3030d219df4
+       Status    : 404
+  [53] GET    https://csii.in/api/swagger.json
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 9d6eb460bf2c995f
+       Status    : 404
+  [54] GET    https://csii.in/openapi.json
+       Role      : User
+       Source    : network (fetch)
+       Hash      : bdccb3bfb9f1e64f
+       Status    : 404
+  [55] GET    https://csii.in/docs
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 7414e377cb8aaf01
+       Status    : 404
+  [56] GET    https://csii.in/swagger/v1/swagger.json
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 903c03d2aa2e619e
+       Status    : 404
+  [57] GET    https://csii.in/robots.txt
+       Role      : User
+       Source    : network (fetch)
+       Hash      : 947540522d256961
+       Status    : 404
+
+  --- SOURCE: NETWORK (FONT) (9) ---
+  [58] GET    https://csii.in/hrms-lite/materialdesignicons-webfont.d4a006580d67057d.woff2?v=5.8.55
+       Role      : User
+       Source    : network (font)
+       Hash      : c6cc078b3e07a935
+       Status    : 200
+  [59] GET    https://csii.in/hrms-lite/fa-solid-900.631e7c263e81c4bb.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : c9601fba80877297
+       Status    : 200
+  [60] GET    https://csii.in/hrms-lite/boxicons.6761648c004cae3a.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : d29f0cbe0a8c12fb
+       Status    : 200
+  [61] GET    https://csii.in/webfonts/fa-solid-900.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : eaac5ec2e600b08a
+       Status    : 200
+  [62] GET    https://csii.in/webfonts/fa-duotone-900.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : a63206118e1e9d0c
+       Status    : 200
+  [63] GET    https://csii.in/webfonts/fa-brands-400.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : d2b6d78cc3103c3b
+       Status    : 200
+  [64] GET    https://csii.in/webfonts/fa-regular-400.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : 1f34401059cc48b3
+       Status    : 200
+  [65] GET    https://csii.in/webfonts/fa-thin-100.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : 8235af3add7356d8
+       Status    : 200
+  [66] GET    https://csii.in/webfonts/fa-light-300.woff2
+       Role      : User
+       Source    : network (font)
+       Hash      : cdc97a3a49b0fd82
+       Status    : 200
+
+  --- SOURCE: NETWORK (SCRIPT) (18) ---
+  [67] GET    https://csii.in/hrms-lite/runtime.da36a8364613d016.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 3d9d023b285b148f
+       Status    : 200
+  [68] GET    https://csii.in/hrms-lite/polyfills.7594bf3bc5be05ba.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 6c2e901d097c59e4
+       Status    : 200
+  [69] GET    https://csii.in/hrms-lite/main.10cf3d223b0ebd43.js
+       Role      : User
+       Source    : network (script)
+       Hash      : ef5cdfed16850689
+       Status    : 200
+  [70] GET    https://csii.in/hrms-lite/46.9265ff1bbac895f3.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 150afb3a71df8ede
+       Status    : 200
+  [71] GET    https://csii.in/hrms-lite/common.365273e87aaa9eb6.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 6de1d060a66aba6d
+       Status    : 200
+  [72] GET    https://csii.in/hrms-lite/739.7aca8a0d764b361b.js
+       Role      : User
+       Source    : network (script)
+       Hash      : c1f4ebbe48722808
+       Status    : 200
+  [73] GET    https://csii.in/hrms-lite/139.f19a01bc3ae66b57.js
+       Role      : User
+       Source    : network (script)
+       Hash      : e8e62a18914eec26
+       Status    : 200
+  [74] GET    https://csii.in/hrms-lite/653.6b26cdd73adafec1.js
+       Role      : User
+       Source    : network (script)
+       Hash      : f603cdd8eeef693b
+       Status    : 200
+  [75] GET    https://csii.in/hrms-lite/550.27edf2e9c0f30874.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 93ae8f4fbdedb3f8
+       Status    : 200
+  [76] GET    https://csii.in/hrms-lite/887.705630d3ef148a07.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 10c50596478260a4
+       Status    : 200
+  [77] GET    https://csii.in/hrms-lite/403.9a9e64d97c0f1811.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 0ce537749d7addbe
+       Status    : 200
+  [78] GET    https://csii.in/js/jquery-3.6.3.min.js
+       Role      : User
+       Source    : network (script)
+       Hash      : ee78ba13fbe6ed83
+       Status    : 200
+  [79] GET    https://csii.in/js/jquery.teletype.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 64f5a03dad960a83
+       Status    : 200
+  [80] GET    https://csii.in/js/header.js
+       Role      : User
+       Source    : network (script)
+       Hash      : a5c37b0ae203111b
+       Status    : 200
+  [81] GET    https://csii.in/js/footer.js
+       Role      : User
+       Source    : network (script)
+       Hash      : e1497970b07790c1
+       Status    : 200
+  [82] GET    https://csii.in/js/bootstrap.bundle.min.js
+       Role      : User
+       Source    : network (script)
+       Hash      : a3ac7b4f6d93f2b8
+       Status    : 200
+  [83] GET    https://csii.in/js/aos.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 6aaf5393daf28d63
+       Status    : 200
+  [84] GET    https://csii.in/js/custom.js
+       Role      : User
+       Source    : network (script)
+       Hash      : 7bf9a7ef8cf49912
+       Status    : 200
+
+  --- SOURCE: NETWORK (XHR) (15) ---
+  [85] POST   https://csii.in/hrms-lite-api/auth/login
+       Role      : User
+       Source    : network (xhr)
+       Hash      : a3440bc6aa579608
+       Status    : 200
+  [86] GET    https://csii.in/hrms-lite-api/api/dashboard/metrics
+       Role      : User
+       Source    : network (xhr)
+       Hash      : eb394addc5e341d2
+       Status    : 200
+  [87] GET    https://csii.in/hrms-lite-api/api/company/profile
+       Role      : User
+       Source    : network (xhr)
+       Hash      : f5e99cd089a8d280
+       Status    : 200
+  [88] GET    https://csii.in/hrms-lite-api/attachment/entity/COMPANY_PROFILE_PIC/1
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 0354a6d09adb49db
+       Status    : 200
+  [89] GET    https://csii.in/hrms-lite-api/attachment/entity/COMPANY_DOCUMENT/1
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 06b95fd19d582176
+       Status    : 200
+  [90] GET    https://csii.in/hrms-lite-api/attachment/download/149
+       Role      : User
+       Source    : network (xhr)
+       Hash      : bf2dae165f8604fa
+       Status    : 200
+  [91] GET    https://csii.in/hrms-lite-api/departments
+       Role      : User
+       Source    : network (xhr)
+       Hash      : b7409759086fa4e3
+       Status    : 200
+  [92] GET    https://csii.in/hrms-lite-api/designations
+       Role      : User
+       Source    : network (xhr)
+       Hash      : a96ff12e86b5afec
+       Status    : 200
+  [93] GET    https://csii.in/hrms-lite-api/master-salary/list
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 2f513dd7851664f9
+       Status    : 200
+  [94] GET    https://csii.in/hrms-lite-api/master-salary/pf-esic-config
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 8d40e777c2419566
+       Status    : 200
+  [95] GET    https://csii.in/hrms-lite-api/api/custom-fields/definitions
+       Role      : User
+       Source    : network (xhr)
+       Hash      : fe1037b4e8f89bbc
+       Status    : 200
+  [96] POST   https://csii.in/hrms-lite-api/company/user-setup/get-users
+       Role      : User
+       Source    : network (xhr)
+       Hash      : d8e69645497bc254
+       Status    : 200
+  [97] GET    https://csii.in/hrms-lite-api/company/user-setup/get-user-dropdown
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 8a8f387a0a66aa6e
+       Status    : 200
+  [98] GET    https://csii.in/hrms-lite-api/company/user-setup/bulk-import-history
+       Role      : User
+       Source    : network (xhr)
+       Hash      : 0e4c06a1803ebc03
+       Status    : 200
+  [99] POST   https://csii.in/hrms-lite-api/salary-generation/search
+       Role      : User
+       Source    : network (xhr)
+       Hash      : c1abcdd7903f40eb
+       Status    : 200
+
+======================================================================
+API VERSION BAC CANDIDATES (FR-02.6)
+======================================================================
+  Endpoint  : GET:/swagger/vX/swagger.json
+  Present in: v1   Absent in: v2
+  Roles seen: User
+  Risk      : HIGH — endpoint may exist without auth enforcement in older version
+
+
+======================================================================
+END OF CRAWL REPORT
+======================================================================
