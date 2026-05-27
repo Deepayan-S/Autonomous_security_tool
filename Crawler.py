@@ -194,6 +194,23 @@ def _format_endpoint_txt(ep: EndpointRecord, idx: int) -> str:
     if ep.form_structure:
         fields = list(ep.form_structure.get("fields", {}).keys())
         lines.append(f"       Form flds : {', '.join(fields)}")
+        
+    def _format_json(text):
+        if not text: return ""
+        try:
+            return json.dumps(json.loads(text), indent=2)
+        except Exception:
+            return text
+            
+    if ep.body:
+        lines.append(f"       Payload   :")
+        for line in _format_json(ep.body).splitlines()[:50]:
+            lines.append(f"                   {line}")
+    if ep.response_body:
+        lines.append(f"       Response  :")
+        for line in _format_json(ep.response_body).splitlines()[:100]:
+            lines.append(f"                   {line}")
+            
     return "\n".join(lines)
 
 
@@ -467,7 +484,8 @@ def _make_request_handler(
 
         if not _in_scope(url) or _is_excluded(url):
             return
-        if url.endswith((".css", ".png", ".jpg", ".gif", ".ico", ".woff", ".svg")):
+        # We only care about APIs, ignoring documents, scripts, stylesheets, etc.
+        if request.resource_type not in ("fetch", "xhr"):
             return
 
         fp = _fingerprint(url, method)
@@ -891,13 +909,25 @@ def _write_json_report(all_results: list[CrawlResult], version_flags: list[dict]
             return asdict(obj)
         return str(obj)
 
+    results_list = []
+    for r in all_results:
+        d = asdict(r)
+        for ep in d.get("endpoints", []):
+            for k in ("body", "response_body"):
+                if ep.get(k):
+                    try:
+                        ep[k] = json.loads(ep[k])
+                    except Exception:
+                        pass
+        results_list.append(d)
+
     payload = {
         "meta": {
             "target":    TARGET_BASE_URL,
             "generated": datetime.utcnow().isoformat(),
             "roles":     [r.role for r in all_results],
         },
-        "results": [asdict(r) for r in all_results],
+        "results": results_list,
         "version_bac_candidates": version_flags,
     }
     output_path.write_text(json.dumps(payload, indent=2, default=_serialise), encoding="utf-8")
