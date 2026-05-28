@@ -398,31 +398,12 @@ async def _probe_sitemap_and_robots(page: Page, role: str) -> list[EndpointRecor
 #  LOGIN HANDLER
 # ─────────────────────────────────────────────
 
-async def _wait_and_get_locator(page: Page, selectors: list[str], timeout: int = 15000):
-    try:
-        # Wait for any of the selectors to become visible
-        await page.wait_for_selector(", ".join(selectors), state="visible", timeout=timeout)
-    except Exception:
-        return None
-
-    # Return the first one that is actually visible
-    for sel in selectors:
-        loc = page.locator(sel).first
-        if await loc.is_visible():
-            return loc
-    return None
-
 async def _login(page: Page, username: str, password: str) -> bool:
     """Perform form-based login. Returns True on apparent success."""
     try:
         await page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
     except Exception as e:
         print(f"    [Login] Could not load login page: {e}")
-        return False
-
-    uname_loc = await _wait_and_get_locator(page, USERNAME_SELECTORS, timeout=15000)
-    if not uname_loc:
-        print(f"    [Login] Could not find any username field on login page")
         return False
 
     # Inject MutationObserver immediately after page load
