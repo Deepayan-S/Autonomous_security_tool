@@ -46,10 +46,56 @@ TARGET_BASE_URL = ""
 
 # Form-based login: selector for the username/password fields and submit button.
 # Adjust selectors to match your target's login page.
+<<<<<<< HEAD
 LOGIN_URL       = ""
 USERNAME_SELECTOR = ""
 PASSWORD_SELECTOR = ""
 SUBMIT_SELECTOR   = ""
+=======
+LOGIN_URL       = f"{TARGET_BASE_URL}/account/login"
+
+USERNAME_SELECTORS = [
+    "input[name='username']",
+    "input[name='email']",
+    "input[name='userid']",
+    "input[id='username']",
+    "input[id='email']",
+    "input[id='userid']",
+    "input[formcontrolname='email']",
+    "input[formcontrolname='username']",
+    "input[type='email']",
+    "input[placeholder*='Username' i]",
+    "input[placeholder*='Email' i]",
+    "input[placeholder*='User ID' i]",
+    "input[placeholder*='UserID' i]",
+    "input[placeholder*='user' i]",
+]
+
+PASSWORD_SELECTORS = [
+    "input[name='password']",
+    "input[name='pass']",
+    "input[id='password']",
+    "input[id='pass']",
+    "input[formcontrolname='password']",
+    "input[type='password']",
+    "input[placeholder*='Password' i]",
+    "input[placeholder*='password' i]",
+]
+
+SUBMIT_SELECTORS = [
+    "button[type='submit']",
+    "input[type='submit']",
+    "button[name='submit']",
+    "button[id='submit']",
+    "button:has-text('Login')",
+    "button:has-text('Sign In')",
+    "button:has-text('Submit')",
+    "button[class*='login' i]",
+    "button[class*='submit' i]",
+    "input[value='Login' i]",
+    "input[value='Sign In' i]",
+]
+>>>>>>> 445698685164297c4f4711becf29c14cbcc54f8f
 
 # Credentials are now collected interactively from the terminal at run time.
 
@@ -398,12 +444,31 @@ async def _probe_sitemap_and_robots(page: Page, role: str) -> list[EndpointRecor
 #  LOGIN HANDLER
 # ─────────────────────────────────────────────
 
+async def _wait_and_get_locator(page: Page, selectors: list[str], timeout: int = 15000):
+    try:
+        # Wait for any of the selectors to become visible
+        await page.wait_for_selector(", ".join(selectors), state="visible", timeout=timeout)
+    except Exception:
+        return None
+
+    # Return the first one that is actually visible
+    for sel in selectors:
+        loc = page.locator(sel).first
+        if await loc.is_visible():
+            return loc
+    return None
+
 async def _login(page: Page, username: str, password: str) -> bool:
     """Perform form-based login. Returns True on apparent success."""
     try:
         await page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
     except Exception as e:
         print(f"    [Login] Could not load login page: {e}")
+        return False
+
+    uname_loc = await _wait_and_get_locator(page, USERNAME_SELECTORS, timeout=15000)
+    if not uname_loc:
+        print(f"    [Login] Could not find any username field on login page")
         return False
 
     # Inject MutationObserver immediately after page load
@@ -417,6 +482,7 @@ async def _login(page: Page, username: str, password: str) -> bool:
     print("    [Login] Performing dynamic login field discovery...")
     selectors = None
     try:
+<<<<<<< HEAD
         # Give page brief moment to execute scripts/components
         await page.wait_for_timeout(2000)
         
@@ -510,6 +576,18 @@ async def _login(page: Page, username: str, password: str) -> bool:
             await page.click(submit_sel)
         else:
             await page.press(pwd_sel, "Enter")
+=======
+        pwd_loc = await _wait_and_get_locator(page, PASSWORD_SELECTORS, timeout=5000)
+        submit_loc = await _wait_and_get_locator(page, SUBMIT_SELECTORS, timeout=5000)
+
+        if not pwd_loc or not submit_loc:
+            print("    [Login] Missing password or submit field")
+            return False
+
+        await uname_loc.fill(username)
+        await pwd_loc.fill(password)
+        await submit_loc.click()
+>>>>>>> 445698685164297c4f4711becf29c14cbcc54f8f
 
         await page.wait_for_timeout(5000)
 
