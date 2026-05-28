@@ -1,0 +1,33 @@
+# ─── SRS Documents (— do not commit) ───
+srs.txt
+AHVF_SRS_v1.0.pdf
+
+# ─── Python virtual environment ───
+.venv/
+venv/
+env/
+
+# ─── Python bytecode ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ─── SQLite database files (runtime state — do not commit) ───
+*.db
+*.db-journal
+*.db-wal
+
+# ─── IDE / Editor ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS artifacts ───
+Thumbs.db
+.DS_Store
+
+# ─── Crawl results (generated at runtime) ───
+results/

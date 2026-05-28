@@ -1,2 +1,4 @@
 playwright
 playwright-stealth
+requests
+aiosqlite

