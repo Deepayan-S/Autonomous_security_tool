@@ -1,0 +1,10 @@
+Role,Source,Method,URL,Status,Hash,JWT,CSRF_Token,Payload,Response
+Admin,network (document),GET,https://csii.in/hrms-lite/,200,a397ec5780ea37b0,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/runtime.da36a8364613d016.js,200,3d9d023b285b148f,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/polyfills.7594bf3bc5be05ba.js,200,6c2e901d097c59e4,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/main.10cf3d223b0ebd43.js,200,ef5cdfed16850689,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/46.9265ff1bbac895f3.js,200,150afb3a71df8ede,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/common.365273e87aaa9eb6.js,200,6de1d060a66aba6d,,,,
+Admin,network (script),GET,https://csii.in/hrms-lite/739.7aca8a0d764b361b.js,200,c1f4ebbe48722808,,,,
+Admin,network (font),GET,https://csii.in/hrms-lite/materialdesignicons-webfont.d4a006580d67057d.woff2?v=5.8.55,200,c6cc078b3e07a935,,,,
+Admin,network (xhr),POST,https://csii.in/hrms-lite-api/auth/login,,a3440bc6aa579608,,,"{""email"":""spk@csii.in"",""password"":""Spk@1234"",""keys"":[]}",

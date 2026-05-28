@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "target": "https://csii.in/",
+    "generated": "2026-05-28T06:57:53.521774",
+    "roles": [
+      "Admin"
+    ]
+  },
+  "results": [
+    {
+      "role": "Admin",
+      "endpoints": [
+        {
+          "url": "https://csii.in/hrms-lite/",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "upgrade-insecure-requests": "1",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\""
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (document)",
+          "schema_hash": "a397ec5780ea37b0",
+          "discovered_at": "2026-05-28T06:57:40.035766+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/runtime.da36a8364613d016.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "3d9d023b285b148f",
+          "discovered_at": "2026-05-28T06:57:40.579246+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/polyfills.7594bf3bc5be05ba.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "6c2e901d097c59e4",
+          "discovered_at": "2026-05-28T06:57:40.579380+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/main.10cf3d223b0ebd43.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "ef5cdfed16850689",
+          "discovered_at": "2026-05-28T06:57:40.579513+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/46.9265ff1bbac895f3.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "150afb3a71df8ede",
+          "discovered_at": "2026-05-28T06:57:48.898944+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/common.365273e87aaa9eb6.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "6de1d060a66aba6d",
+          "discovered_at": "2026-05-28T06:57:48.899193+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/739.7aca8a0d764b361b.js",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (script)",
+          "schema_hash": "c1f4ebbe48722808",
+          "discovered_at": "2026-05-28T06:57:48.899410+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite/materialdesignicons-webfont.d4a006580d67057d.woff2?v=5.8.55",
+          "method": "GET",
+          "role": "Admin",
+          "headers": {
+            "origin": "https://csii.in",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/styles.b06cc91ad12c94f4.css",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": null,
+          "response_status": 200,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (font)",
+          "schema_hash": "c6cc078b3e07a935",
+          "discovered_at": "2026-05-28T06:57:48.947555+00:00"
+        },
+        {
+          "url": "https://csii.in/hrms-lite-api/auth/login",
+          "method": "POST",
+          "role": "Admin",
+          "headers": {
+            "sec-ch-ua-platform": "\"Windows\"",
+            "referer": "https://csii.in/hrms-lite/",
+            "user-agent": "AHVF-SecurityScanner/1.0 (authorized-testing)",
+            "accept": "application/json, text/plain, */*",
+            "sec-ch-ua": "\"Chromium\";v=\"148\", \"HeadlessChrome\";v=\"148\", \"Not/A)Brand\";v=\"99\"",
+            "content-type": "application/json",
+            "sec-ch-ua-mobile": "?0"
+          },
+          "body": "{\"email\":\"spk@csii.in\",\"password\":\"Spk@1234\",\"keys\":[]}",
+          "response_status": null,
+          "response_body": null,
+          "jwt": null,
+          "cookies": [],
+          "csrf_token": null,
+          "form_structure": null,
+          "source": "network (xhr)",
+          "schema_hash": "a3440bc6aa579608",
+          "discovered_at": "2026-05-28T06:57:53.434072+00:00"
+        }
+      ],
+      "graphql_schemas": [],
+      "api_version_flags": [],
+      "spa_routes": []
+    }
+  ],
+  "version_bac_candidates": []
+}

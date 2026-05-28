@@ -1,0 +1,61 @@
+# AHVF Crawler Configuration
+
+# MANDATORY: You must acknowledge the Rules of Engagement
+roe_acknowledged: true
+
+# Target Environment
+target_base_url: "https://csii.in/"
+login_url: "https://csii.in/hrms-lite/#/account/login"
+
+# Scope Whitelist (Hostnames or IPs)
+scope_hosts:
+  - "csii.in"
+
+# Excluded Paths (Crawler will not follow links or submit forms here)
+excluded_paths:
+  - "/logout"
+  - "/signout"
+  - "/assets/"
+  - "/static/"
+
+# Crawler Limits
+max_pages_per_role: 50
+crawl_depth: 5
+
+# DOM Selectors for Login
+username_selector: "input[placeholder='Enter email']"
+password_selector: "input[placeholder='Enter password']"
+submit_selector: "button[type='submit']"
+
+# Rate Limiting & Concurrency
+rate_limit:
+  floor: 1.0               # Minimum seconds between requests
+  backoff_multiplier: 2.0  # Multiplier on 429 errors
+  max_retries: 5           # Give up after X retries
+
+# CAPTCHA Solving (Ollama)
+captcha:
+  enabled: false           # Set to true if local Ollama is running
+  model: "llava"
+  api_url: "http://localhost:11434/api/generate"
+  max_retries: 3
+
+# LLM DOM Parsing (Ollama)
+llm:
+  enabled: true            # Use LLM to analyze the login page DOM
+  model: "llama3"          # Text model recommended
+  api_url: "http://localhost:11434/api/generate"
+
+# Roles (Multiple roles will run concurrently)
+# Leave username/password blank for unauthenticated Guest crawl
+roles:
+  Admin:
+    username: "spk@csii.in"
+    password: "Spk@1234"
+  Guest:
+    username: ""
+    password: ""
+
+# Output Storage
+output_dir: "results"
+db_path: "results/ahvf_crawler.db"

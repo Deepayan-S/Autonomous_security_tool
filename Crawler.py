@@ -51,6 +51,14 @@ USERNAME_SELECTOR = ""
 PASSWORD_SELECTOR = ""
 SUBMIT_SELECTOR   = ""
 
+# ─────────────────────────────────────────────
+#  CAPTCHA / LLM CONFIG
+# ─────────────────────────────────────────────
+OLLAMA_BASE_URL   = "http://localhost:11434"   # Local Ollama instance
+OLLAMA_TEXT_MODEL = "qwen2.5:7b"              # For DOM analysis (no vision needed)
+OLLAMA_VIS_MODEL  = "llama3.2-vision"         # For CAPTCHA image reading
+CAPTCHA_MAX_RETRIES = 2                        # Re-solve attempts before giving up
+
 # Credentials are now collected interactively from the terminal at run time.
 
 # Scope: only URLs whose host matches this list will be crawled.
@@ -394,6 +402,192 @@ async def _probe_sitemap_and_robots(page: Page, role: str) -> list[EndpointRecor
     return endpoints
 
 
+async def _extract_dom_snapshot(page: Page) -> str:
+    snapshot = await page.evaluate("""
+    () => {
+        const lines = [];
+
+        lines.push('PAGE: ' + document.title);
+
+        document.querySelectorAll('h1, h2, h3').forEach(h => {
+            const t = h.textContent.trim().replace(/\\s+/g, ' ');
+            if (t) lines.push('HEADING: ' + t.slice(0, 80));
+        });
+
+        document.querySelectorAll('input, textarea, select').forEach(el => {
+            const attrs = {
+                tag:          el.tagName.toLowerCase(),
+                type:         el.getAttribute('type') || '',
+                name:         el.getAttribute('name') || '',
+                id:           el.getAttribute('id') || '',
+                placeholder:  el.getAttribute('placeholder') || '',
+                autocomplete: el.getAttribute('autocomplete') || '',
+                ariaLabel:    el.getAttribute('aria-label') || '',
+                testid:       el.getAttribute('data-testid') || '',
+                visible:      window.getComputedStyle(el).display !== 'none'
+            };
+            lines.push('INPUT: ' + JSON.stringify(attrs));
+        });
+
+        document.querySelectorAll('label').forEach(el => {
+            lines.push('LABEL: for=' + (el.getAttribute('for') || '') +
+                       ' text=' + el.textContent.trim().replace(/\\s+/g, ' ').slice(0, 60));
+        });
+
+        document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach(el => {
+            const attrs = {
+                tag:    el.tagName.toLowerCase(),
+                type:   el.getAttribute('type') || '',
+                id:     el.getAttribute('id') || '',
+                name:   el.getAttribute('name') || '',
+                text:   el.textContent.trim().replace(/\\s+/g, ' ').slice(0, 40),
+                testid: el.getAttribute('data-testid') || ''
+            };
+            lines.push('BUTTON: ' + JSON.stringify(attrs));
+        });
+
+        const captchaSelectors = [
+            'img[id*="captcha" i]',
+            'img[src*="captcha" i]',
+            'img[class*="captcha" i]',
+            'img[alt*="captcha" i]',
+            'canvas[id*="captcha" i]',
+            'canvas[class*="captcha" i]',
+            'div[class*="captcha" i]',
+            'input[name*="captcha" i]',
+            'input[id*="captcha" i]'
+        ];
+        captchaSelectors.forEach(sel => {
+            const el = document.querySelector(sel);
+            if (el) {
+                lines.push(
+                    'CAPTCHA_SIGNAL: selector=' + sel +
+                    ' tag=' + el.tagName.toLowerCase() +
+                    ' id=' + (el.id || '') +
+                    ' src=' + (el.getAttribute('src') || '').slice(0, 80)
+                );
+            }
+        });
+
+        return lines.join('\\n');
+    }
+    """)
+    return snapshot or ""
+
+async def _solve_captcha_with_llm(page: Page, captcha_signal: str) -> Optional[str]:
+    import base64
+    import io
+    import urllib.request as ureq
+    try:
+        from PIL import Image, ImageEnhance
+        import numpy as np
+        import cv2
+    except ImportError:
+        print("    [CAPTCHA] Missing libraries. Run: pip install pillow opencv-python-headless numpy")
+        return None
+
+    sel_match = re.search(r'selector=([^\s]+)', captcha_signal)
+    if not sel_match:
+        return None
+    selector = sel_match.group(1)
+
+    raw_bytes = None
+
+    try:
+        element = await page.query_selector(selector)
+        if element:
+            raw_bytes = await element.screenshot(type="png", scale="device")
+    except Exception:
+        pass
+
+    if not raw_bytes:
+        try:
+            data_url = await page.evaluate(f"""
+            () => {{
+                const el = document.querySelector('{selector}');
+                if (el && el.tagName.toLowerCase() === 'canvas') {{
+                    return el.toDataURL('image/png', 1.0);
+                }}
+                return null;
+            }}
+            """)
+            if data_url and ',' in data_url:
+                raw_bytes = base64.b64decode(data_url.split(',', 1)[1])
+        except Exception:
+            pass
+
+    if not raw_bytes:
+        print(f"    [CAPTCHA] Could not capture image for selector: {selector}")
+        return None
+
+    try:
+        img = Image.open(io.BytesIO(raw_bytes)).convert("RGBA")
+        bg  = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        bg.paste(img, mask=img.split()[3])
+        img = bg.convert("RGB")
+
+        w, h = img.size
+        if w < 300:
+            scale = 300 / w
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+        arr      = np.array(img)
+        gray     = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        denoised = cv2.fastNlMeansDenoising(gray, h=10, templateWindowSize=7, searchWindowSize=21)
+        binary   = cv2.adaptiveThreshold(
+            denoised, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            blockSize=11, C=2
+        )
+        kernel  = np.ones((2, 2), np.uint8)
+        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        img     = Image.fromarray(cleaned).convert("RGB")
+        img     = ImageEnhance.Contrast(img).enhance(3.0)
+
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        processed_b64 = base64.b64encode(out.getvalue()).decode("utf-8")
+
+    except Exception as e:
+        print(f"    [CAPTCHA] Preprocessing failed ({e}), using raw image")
+        processed_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    prompt = (
+        "This image contains a CAPTCHA. "
+        "Read every character carefully. "
+        "Reply with ONLY the characters you see — no spaces, no explanation, nothing else. "
+        "If it is a math problem, reply with only the numeric answer."
+    )
+
+    payload = json.dumps({
+        "model":  OLLAMA_VIS_MODEL,
+        "prompt": prompt,
+        "images": [processed_b64],
+        "stream": False,
+        "options": {"temperature": 0.0, "num_predict": 32}
+    }).encode("utf-8")
+
+    try:
+        req = ureq.Request(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with ureq.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+
+        raw_answer = result.get("response", "").strip()
+        clean      = re.sub(r"[^A-Za-z0-9@#\-]", "", raw_answer).strip()
+        print(f"    [CAPTCHA] LLM answer: '{clean}' (raw: '{raw_answer[:60]}')")
+        return clean if clean else None
+
+    except Exception as e:
+        print(f"    [CAPTCHA] Ollama call failed: {e}")
+        return None
+
+
 # ─────────────────────────────────────────────
 #  LOGIN HANDLER
 # ─────────────────────────────────────────────
@@ -405,6 +599,68 @@ async def _login(page: Page, username: str, password: str) -> bool:
     except Exception as e:
         print(f"    [Login] Could not load login page: {e}")
         return False
+
+    # ── CAPTCHA DETECTION & SOLVE ─────────────────────────────────────
+    dom_snapshot   = await _extract_dom_snapshot(page)
+    captcha_lines  = [l for l in dom_snapshot.splitlines() if l.startswith("CAPTCHA_SIGNAL:")]
+
+    if captcha_lines:
+        print(f"    [CAPTCHA] {len(captcha_lines)} CAPTCHA signal(s) detected")
+
+        captcha_input_sel = await page.evaluate("""
+        () => {
+            const candidates = [
+                'input[name*="captcha" i]',
+                'input[id*="captcha" i]',
+                'input[placeholder*="captcha" i]',
+                'input[name*="code" i]',
+                'input[name*="verify" i]'
+            ];
+            for (const sel of candidates) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    if (el.id)   return '#' + CSS.escape(el.id);
+                    if (el.name) return 'input[name="' + CSS.escape(el.name) + '"]';
+                    return sel;
+                }
+            }
+            return null;
+        }
+        """)
+
+        solved = False
+        for attempt in range(1, CAPTCHA_MAX_RETRIES + 1):
+            print(f"    [CAPTCHA] Solve attempt {attempt}/{CAPTCHA_MAX_RETRIES}...")
+            answer = await _solve_captcha_with_llm(page, captcha_lines[0])
+
+            if answer and captcha_input_sel:
+                try:
+                    await page.fill(captcha_input_sel, answer)
+                    print(f"    [CAPTCHA] Filled '{captcha_input_sel}' with '{answer}'")
+                    solved = True
+                    break
+                except Exception as e:
+                    print(f"    [CAPTCHA] Could not fill input: {e}")
+
+            elif answer and not captcha_input_sel:
+                print(f"    [CAPTCHA] Answer '{answer}' obtained but no input field found")
+                solved = True
+                break
+
+            else:
+                print(f"    [CAPTCHA] Attempt {attempt} returned no answer")
+                if attempt < CAPTCHA_MAX_RETRIES:
+                    try:
+                        await page.reload(wait_until="networkidle", timeout=15000)
+                    except Exception:
+                        pass
+
+        if not solved:
+            print(f"    [CAPTCHA] All attempts failed — proceeding anyway (CAPTCHA might be optional)")
+
+    else:
+        print("    [CAPTCHA] No CAPTCHA detected on login page")
+    # ── END CAPTCHA BLOCK ─────────────────────────────────────────────
 
     # Inject MutationObserver immediately after page load
     await page.add_init_script(DOM_MUTATION_OBSERVER_JS)
@@ -501,17 +757,33 @@ async def _login(page: Page, username: str, password: str) -> bool:
         if pwd_sel:
             await page.wait_for_selector(pwd_sel, timeout=10000)
 
-        # Fill values
-        await page.fill(user_sel, username)
-        await page.fill(pwd_sel, password)
+        # Fill values using typing which triggers React/Vue synthetic events reliably
+        await page.fill(user_sel, "") # Clear first
+        await page.type(user_sel, username, delay=30)
+        await page.wait_for_timeout(500)
+        
+        await page.fill(pwd_sel, "")
+        await page.type(pwd_sel, password, delay=30)
+        await page.wait_for_timeout(500)
 
-        # Click submit button or press Enter
+        # Force a Javascript click to bypass any transparent overlays/banners
         if submit_sel:
-            await page.click(submit_sel)
-        else:
+            try:
+                await page.evaluate(f"document.querySelector('{submit_sel}').click()")
+            except Exception:
+                pass
+        
+        # Always press Enter on password field as fallback
+        try:
             await page.press(pwd_sel, "Enter")
+        except Exception:
+            pass
 
-        await page.wait_for_timeout(5000)
+        try:
+            # Wait for network idle or timeout, catching exception
+            await page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
 
         parsed = urllib.parse.urlparse(page.url)
         current_fragment = parsed.fragment.lower()
@@ -523,8 +795,21 @@ async def _login(page: Page, username: str, password: str) -> bool:
         print("=======================\n")
 
         # Heuristic to check if we are still on a login screen
-        if "login" in current_fragment or "login" in parsed.path.lower():
-            print("    [Login] Still on login page")
+        login_form_visible = False
+        try:
+            login_form_visible = await page.is_visible(user_sel)
+        except Exception:
+            pass
+
+        if login_form_visible and ("login" in current_fragment or "login" in parsed.path.lower()):
+            print("    [Login] Still on login page and form is visible.")
+            # Extract potential error messages
+            error_msg = await page.evaluate('''() => {
+                const el = document.querySelector('.alert, .error, .text-danger, [role="alert"], .toast-message, .error-message');
+                return el ? el.innerText.trim() : "";
+            }''')
+            if error_msg:
+                print(f"    [Login] Error on page: {error_msg}")
             return False
 
         print(f"    [Login] Success -> redirected to {page.url}")
@@ -755,7 +1040,7 @@ async def crawl_role(
     else:
         print("  [Crawl] No username provided. Crawling unauthenticated (Guest mode)...")
         try:
-            await page.goto(TARGET_BASE_URL, wait_until="networkidle", timeout=30000)
+            await page.goto(TARGET_BASE_URL, wait_until="domcontentloaded", timeout=30000)
         except Exception as e:
             print(f"  [!] Failed to load target URL: {e}")
             await browser.close()
@@ -781,7 +1066,7 @@ async def crawl_role(
         print(f"  [Crawl] [{pages_visited:03d}] depth={depth} {url[:80]}")
 
         try:
-            await page.goto(url, wait_until="networkidle", timeout=15000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
         except Exception as e:
             print(f"    [!] Navigation failed: {e}")
             continue

@@ -1,0 +1,76 @@
+======================================================================
+AHVF — Crawl Results
+Generated : 2026-05-28T06:57:53.520937 UTC
+Target    : https://csii.in/
+Roles     : Admin
+======================================================================
+
+SUMMARY
+────────────────────────────────────────
+  Total endpoints captured : 9
+  SPA routes (FR-02.4)     : 0
+  GraphQL schemas (FR-02.5): 0
+  Version BAC flags (FR-02.6): 0
+
+
+──────────────────────────────────────────────────────────────────────
+ROLE: ADMIN
+──────────────────────────────────────────────────────────────────────
+  Endpoints (9):
+
+  --- SOURCE: NETWORK (DOCUMENT) (1) ---
+  [1] GET    https://csii.in/hrms-lite/
+       Role      : Admin
+       Source    : network (document)
+       Hash      : a397ec5780ea37b0
+       Status    : 200
+
+  --- SOURCE: NETWORK (FONT) (1) ---
+  [2] GET    https://csii.in/hrms-lite/materialdesignicons-webfont.d4a006580d67057d.woff2?v=5.8.55
+       Role      : Admin
+       Source    : network (font)
+       Hash      : c6cc078b3e07a935
+       Status    : 200
+
+  --- SOURCE: NETWORK (SCRIPT) (6) ---
+  [3] GET    https://csii.in/hrms-lite/runtime.da36a8364613d016.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : 3d9d023b285b148f
+       Status    : 200
+  [4] GET    https://csii.in/hrms-lite/polyfills.7594bf3bc5be05ba.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : 6c2e901d097c59e4
+       Status    : 200
+  [5] GET    https://csii.in/hrms-lite/main.10cf3d223b0ebd43.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : ef5cdfed16850689
+       Status    : 200
+  [6] GET    https://csii.in/hrms-lite/46.9265ff1bbac895f3.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : 150afb3a71df8ede
+       Status    : 200
+  [7] GET    https://csii.in/hrms-lite/common.365273e87aaa9eb6.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : 6de1d060a66aba6d
+       Status    : 200
+  [8] GET    https://csii.in/hrms-lite/739.7aca8a0d764b361b.js
+       Role      : Admin
+       Source    : network (script)
+       Hash      : c1f4ebbe48722808
+       Status    : 200
+
+  --- SOURCE: NETWORK (XHR) (1) ---
+  [9] POST   https://csii.in/hrms-lite-api/auth/login
+       Role      : Admin
+       Source    : network (xhr)
+       Hash      : a3440bc6aa579608
+       Status    : N/A
+
+======================================================================
+END OF CRAWL REPORT
+======================================================================
