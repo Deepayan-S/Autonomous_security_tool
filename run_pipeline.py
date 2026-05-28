@@ -149,7 +149,7 @@ def run_generate(db: AHVFDatabase) -> bool:
             orchestrator = PayloadOrchestrator.__new__(PayloadOrchestrator)
             orchestrator.client = None
             orchestrator.db = db
-            orchestrator.batch_size = 50
+            orchestrator.batch_size = 15
             orchestrator._total_generated = 0
             orchestrator._total_fallback = 0
             orchestrator._total_invalid = 0

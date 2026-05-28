@@ -186,7 +186,7 @@ class PayloadOrchestrator:
     After all payloads are generated, the AI connection is severed (FR-05.7).
     """
 
-    def __init__(self, ollama_client: OllamaClient, db=None, batch_size: int = 50):
+    def __init__(self, ollama_client: OllamaClient, db=None, batch_size: int = 15):
         """
         Args:
             ollama_client: Configured OllamaClient instance.
@@ -292,16 +292,20 @@ class PayloadOrchestrator:
 
         # Response should be a list of payload dicts
         if not isinstance(response, list):
-            # Sometimes models wrap the array in an object
+            # Sometimes models wrap the array in an object or return a single object
             if isinstance(response, dict):
-                # Try common wrapper keys
-                for key in ("payloads", "test_cases", "results", "data"):
-                    if key in response and isinstance(response[key], list):
-                        response = response[key]
-                        break
+                # Check if it's a single payload object
+                if all(k in response for k in REQUIRED_PAYLOAD_KEYS):
+                    response = [response]
                 else:
-                    print(f"[M3] Unexpected response structure: {type(response)}")
-                    return None
+                    # Try common wrapper keys
+                    for key in ("payloads", "test_cases", "results", "data"):
+                        if key in response and isinstance(response[key], list):
+                            response = response[key]
+                            break
+                    else:
+                        print(f"[M3] Unexpected response structure (dict keys: {list(response.keys())})")
+                        return None
             else:
                 print(f"[M3] Unexpected response type: {type(response)}")
                 return None
@@ -529,7 +533,7 @@ if __name__ == "__main__":
             print("Running in fallback-only mode (no LLM)...")
             orchestrator = PayloadOrchestrator.__new__(PayloadOrchestrator)
             orchestrator.db = db
-            orchestrator.batch_size = 50
+            orchestrator.batch_size = 15
             orchestrator._total_generated = 0
             orchestrator._total_fallback = 0
             orchestrator._total_invalid = 0

@@ -66,8 +66,7 @@ CREATE TABLE IF NOT EXISTS payload_cache (
     vuln_class          TEXT    NOT NULL,
     payload             TEXT    NOT NULL,
     target_param        TEXT    NOT NULL,
-    expected_indicator  TEXT,
-    FOREIGN KEY (schema_hash) REFERENCES endpoints(schema_hash)
+    expected_indicator  TEXT
 );
 """
 

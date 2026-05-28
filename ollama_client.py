@@ -207,6 +207,7 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": temperature,
+                "num_ctx": 8192,
             },
         }
 
@@ -282,6 +283,7 @@ class OllamaClient:
             "format": "json",  # Ollama native JSON mode
             "options": {
                 "temperature": temperature,
+                "num_ctx": 8192,
             },
         }
 
