@@ -42,21 +42,20 @@ from playwright.async_api import async_playwright, Page, BrowserContext, Request
 #  CONFIGURATION  (hardcoded — refactor later)
 # ─────────────────────────────────────────────
 
-TARGET_BASE_URL = "https://csii.in/hrms-lite/#/"          # Change to your staging target
+TARGET_BASE_URL = ""
 
 # Form-based login: selector for the username/password fields and submit button.
 # Adjust selectors to match your target's login page.
-LOGIN_URL       = f"{TARGET_BASE_URL}/account/login"
-USERNAME_SELECTOR = "input[formcontrolname='email']"
-PASSWORD_SELECTOR = "input[formcontrolname='password']"
-SUBMIT_SELECTOR   = "button[type='submit']"
+LOGIN_URL       = ""
+USERNAME_SELECTOR = ""
+PASSWORD_SELECTOR = ""
+SUBMIT_SELECTOR   = ""
 
-# Credential matrix: role_name -> (username, password)
-CREDENTIAL_MATRIX = {
-    "User":    ("spk@csii.in",   "Spk@1234"),}
+# Credentials are now collected interactively from the terminal at run time.
 
 # Scope: only URLs whose host matches this list will be crawled.
-SCOPE_HOSTS = [ "csii.in" ]
+TARGET_HOST = ""
+SCOPE_HOSTS = []
 
 # Excluded path prefixes (never follow or submit forms here)
 EXCLUDED_PATHS = [
@@ -194,23 +193,6 @@ def _format_endpoint_txt(ep: EndpointRecord, idx: int) -> str:
     if ep.form_structure:
         fields = list(ep.form_structure.get("fields", {}).keys())
         lines.append(f"       Form flds : {', '.join(fields)}")
-        
-    def _format_json(text):
-        if not text: return ""
-        try:
-            return json.dumps(json.loads(text), indent=2)
-        except Exception:
-            return text
-            
-    if ep.body:
-        lines.append(f"       Payload   :")
-        for line in _format_json(ep.body).splitlines()[:50]:
-            lines.append(f"                   {line}")
-    if ep.response_body:
-        lines.append(f"       Response  :")
-        for line in _format_json(ep.response_body).splitlines()[:100]:
-            lines.append(f"                   {line}")
-            
     return "\n".join(lines)
 
 
@@ -420,7 +402,6 @@ async def _login(page: Page, username: str, password: str) -> bool:
     """Perform form-based login. Returns True on apparent success."""
     try:
         await page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
-        await page.wait_for_selector("input[formcontrolname='email']", timeout=15000)
     except Exception as e:
         print(f"    [Login] Could not load login page: {e}")
         return False
@@ -432,10 +413,103 @@ async def _login(page: Page, username: str, password: str) -> bool:
     except Exception:
         pass
 
+    # Heuristic dynamic form field detection
+    print("    [Login] Performing dynamic login field discovery...")
+    selectors = None
     try:
-        await page.fill(USERNAME_SELECTOR, username)
-        await page.fill(PASSWORD_SELECTOR, password)
-        await page.click(SUBMIT_SELECTOR)
+        # Give page brief moment to execute scripts/components
+        await page.wait_for_timeout(2000)
+        
+        selectors = await page.evaluate("""
+        () => {
+            const inputs = Array.from(document.querySelectorAll('input'));
+            let pwd = inputs.find(i => i.type === 'password') || 
+                      inputs.find(i => (i.name || '').toLowerCase().includes('pass') || (i.id || '').toLowerCase().includes('pass'));
+            
+            const candidates = inputs.filter(i => 
+                ['text', 'email', 'tel', 'number', ''].includes((i.type || '').toLowerCase()) && i !== pwd
+            );
+            
+            let user = null;
+            const keywords = ['user', 'email', 'login', 'id', 'name', 'phone', 'account'];
+            for (const kw of keywords) {
+                user = candidates.find(i => {
+                    const name = (i.getAttribute('name') || '').toLowerCase();
+                    const id = (i.getAttribute('id') || '').toLowerCase();
+                    const placeholder = (i.getAttribute('placeholder') || '').toLowerCase();
+                    return name.includes(kw) || id.includes(kw) || placeholder.includes(kw);
+                });
+                if (user) break;
+            }
+            if (!user && pwd) {
+                const before = candidates.filter(i => i.compareDocumentPosition(pwd) & Node.DOCUMENT_POSITION_FOLLOWING);
+                if (before.length > 0) user = before[before.length - 1];
+            }
+            if (!user) user = candidates[0];
+            
+            const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'));
+            let submit = buttons.find(b => (b.getAttribute('type') || '').toLowerCase() === 'submit');
+            if (!submit) {
+                const btnKw = ['login', 'signin', 'submit', 'enter', 'log in', 'sign in'];
+                for (const kw of btnKw) {
+                    submit = buttons.find(b => {
+                        const txt = (b.textContent || b.value || '').toLowerCase();
+                        const id = (b.getAttribute('id') || '').toLowerCase();
+                        return txt.includes(kw) || id.includes(kw);
+                    });
+                    if (submit) break;
+                }
+            }
+            if (!submit && pwd) {
+                const form = pwd.closest('form');
+                if (form) {
+                    const formBtns = form.querySelectorAll('button, input[type="submit"]');
+                    if (formBtns.length > 0) submit = formBtns[formBtns.length - 1];
+                }
+            }
+            
+            const getSel = (el) => {
+                if (!el) return null;
+                if (el.id) return `#${CSS.escape(el.id)}`;
+                if (el.getAttribute('name')) return `${el.tagName.toLowerCase()}[name="${CSS.escape(el.getAttribute('name'))}"]`;
+                if (el.getAttribute('placeholder')) return `${el.tagName.toLowerCase()}[placeholder="${CSS.escape(el.getAttribute('placeholder'))}"]`;
+                if (el.type) return `${el.tagName.toLowerCase()}[type="${CSS.escape(el.type)}"]`;
+                return el.tagName.toLowerCase();
+            };
+            
+            return {
+                username: getSel(user),
+                password: getSel(pwd),
+                submit: getSel(submit)
+            };
+        }
+        """)
+    except Exception as e:
+        print(f"    [Login] Dynamic detection failed: {e}")
+
+    # Determine final selectors to use (falling back to configured selectors)
+    user_sel = (selectors and selectors.get("username")) or USERNAME_SELECTOR
+    pwd_sel = (selectors and selectors.get("password")) or PASSWORD_SELECTOR
+    submit_sel = (selectors and selectors.get("submit")) or SUBMIT_SELECTOR
+
+    print(f"    [Login] Resolved selectors -> Username: '{user_sel}', Password: '{pwd_sel}', Submit: '{submit_sel}'")
+
+    try:
+        # Wait for elements to become visible
+        if user_sel:
+            await page.wait_for_selector(user_sel, timeout=10000)
+        if pwd_sel:
+            await page.wait_for_selector(pwd_sel, timeout=10000)
+
+        # Fill values
+        await page.fill(user_sel, username)
+        await page.fill(pwd_sel, password)
+
+        # Click submit button or press Enter
+        if submit_sel:
+            await page.click(submit_sel)
+        else:
+            await page.press(pwd_sel, "Enter")
 
         await page.wait_for_timeout(5000)
 
@@ -448,7 +522,8 @@ async def _login(page: Page, username: str, password: str) -> bool:
         print("Parsed Fragment:", current_fragment)
         print("=======================\n")
 
-        if "login" in current_fragment:
+        # Heuristic to check if we are still on a login screen
+        if "login" in current_fragment or "login" in parsed.path.lower():
             print("    [Login] Still on login page")
             return False
 
@@ -457,14 +532,6 @@ async def _login(page: Page, username: str, password: str) -> bool:
     except Exception as e:
         print(f"    [Login] Form interaction failed: {e}")
         return False
-
-    # Heuristic: if we're still on the login URL, login likely failed
-    if "login" in current_fragment:
-        print("    [Login] Still on login page")
-        return False
-
-    print(f"    [Login] Success → redirected to {page.url}")
-    return True
 
 
 # ─────────────────────────────────────────────
@@ -484,8 +551,7 @@ def _make_request_handler(
 
         if not _in_scope(url) or _is_excluded(url):
             return
-        # We only care about APIs, ignoring documents, scripts, stylesheets, etc.
-        if request.resource_type not in ("fetch", "xhr"):
+        if url.endswith((".css", ".png", ".jpg", ".gif", ".ico", ".woff", ".svg")):
             return
 
         fp = _fingerprint(url, method)
@@ -658,33 +724,42 @@ async def crawl_role(
     page.on("request",  _make_request_handler(role, seen_hashes, result.endpoints, current_cookies, current_jwt))
     page.on("response", _make_response_handler(result.endpoints, role))
 
-    # ── Step 1: Login ──────────────────────────────────────────────
-    login_ok = await _login(page, username, password)
-    if not login_ok:
-        print(f"  [!] Skipping role '{role}' — login failed.")
-        await browser.close()
-        return result
+    # ── Step 1: Login (Only if username is provided) ─────────────────
+    if username:
+        login_ok = await _login(page, username, password)
+        if not login_ok:
+            print(f"  [!] Skipping role '{role}' — login failed.")
+            await browser.close()
+            return result
 
-    # Refresh cookies after login
-    raw_cookies = await context.cookies()
-    print("\n===== LOGIN COOKIES =====")
+        # Refresh cookies after login
+        raw_cookies = await context.cookies()
+        print("\n===== LOGIN COOKIES =====")
 
-    for cookie in raw_cookies:
-        print(
-            f"{cookie['name']} | "
-            f"{cookie['domain']}"
-        )
+        for cookie in raw_cookies:
+            print(
+                f"{cookie['name']} | "
+                f"{cookie['domain']}"
+            )
 
-    print("=========================\n")
-    current_cookies.clear()
-    current_cookies.extend([{"name": c["name"], "value": c["value"], "domain": c["domain"]} for c in raw_cookies])
+        print("=========================\n")
+        current_cookies.clear()
+        current_cookies.extend([{"name": c["name"], "value": c["value"], "domain": c["domain"]} for c in raw_cookies])
 
-    # Extract JWT from cookies post-login
-    for c in current_cookies:
-        found = _extract_jwt(c.get("value", ""))
-        if found:
-            current_jwt[0] = found
-            break
+        # Extract JWT from cookies post-login
+        for c in current_cookies:
+            found = _extract_jwt(c.get("value", ""))
+            if found:
+                current_jwt[0] = found
+                break
+    else:
+        print("  [Crawl] No username provided. Crawling unauthenticated (Guest mode)...")
+        try:
+            await page.goto(TARGET_BASE_URL, wait_until="networkidle", timeout=30000)
+        except Exception as e:
+            print(f"  [!] Failed to load target URL: {e}")
+            await browser.close()
+            return result
 
     # ── Step 2: BFS link crawl ──────────────────────────────────────
     visited_urls  = set()
@@ -909,25 +984,13 @@ def _write_json_report(all_results: list[CrawlResult], version_flags: list[dict]
             return asdict(obj)
         return str(obj)
 
-    results_list = []
-    for r in all_results:
-        d = asdict(r)
-        for ep in d.get("endpoints", []):
-            for k in ("body", "response_body"):
-                if ep.get(k):
-                    try:
-                        ep[k] = json.loads(ep[k])
-                    except Exception:
-                        pass
-        results_list.append(d)
-
     payload = {
         "meta": {
             "target":    TARGET_BASE_URL,
             "generated": datetime.utcnow().isoformat(),
             "roles":     [r.role for r in all_results],
         },
-        "results": results_list,
+        "results": [asdict(r) for r in all_results],
         "version_bac_candidates": version_flags,
     }
     output_path.write_text(json.dumps(payload, indent=2, default=_serialise), encoding="utf-8")
@@ -970,18 +1033,68 @@ def _write_csv_report(all_results: list[CrawlResult], output_path: Path):
 # ─────────────────────────────────────────────
 
 async def main():
+    global TARGET_BASE_URL, LOGIN_URL, USERNAME_SELECTOR, PASSWORD_SELECTOR, SUBMIT_SELECTOR, TARGET_HOST, SCOPE_HOSTS
+
     print("\n" + "=" * 70)
     print("  AHVF — Module 1: Stateful Crawler")
     print("  !! For authorized security testing only !!")
     print("=" * 70)
 
+    print("\n--- Target Configuration ---")
+    TARGET_BASE_URL = input("Enter Target Base URL (e.g., http://example.com/): ").strip()
+    if not TARGET_BASE_URL.endswith('/'):
+        TARGET_BASE_URL += '/'
+        
+    LOGIN_URL = input(f"Enter Login URL [default: {TARGET_BASE_URL}]: ").strip()
+    if not LOGIN_URL:
+        LOGIN_URL = TARGET_BASE_URL
+        
+    USERNAME_SELECTOR = input("Enter Username Selector [default: input[name='username']]: ").strip()
+    if not USERNAME_SELECTOR:
+        USERNAME_SELECTOR = "input[name='username']"
+        
+    PASSWORD_SELECTOR = input("Enter Password Selector [default: input[name='password']]: ").strip()
+    if not PASSWORD_SELECTOR:
+        PASSWORD_SELECTOR = "input[name='password']"
+        
+    SUBMIT_SELECTOR = input("Enter Submit Selector [default: button[type='submit']]: ").strip()
+    if not SUBMIT_SELECTOR:
+        SUBMIT_SELECTOR = "button[type='submit']"
+
+    TARGET_HOST = urllib.parse.urlparse(TARGET_BASE_URL).hostname or ""
+    SCOPE_HOSTS = [ TARGET_HOST ] if TARGET_HOST else []
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     all_results: list[CrawlResult] = []
+
+    import getpass
+    print("\n--- Crawler Authentication Settings ---")
+    print("Please configure credentials for each crawl role.")
+    print("If you want to perform a Guest/Unauthenticated crawl, leave the inputs empty.\n")
+    
+    credentials = {}
+    while True:
+        role = input("Enter crawl role (e.g., 'User', 'Admin') [Press Enter to finish setting up roles]: ").strip()
+        if not role:
+            break
+        username = input(f"Enter username for '{role}': ").strip()
+        if not username:
+            print(f"Skipping credentials configuration for '{role}' (will crawl unauthenticated as '{role}').")
+            credentials[role] = ("", "")
+            continue
+        password = getpass.getpass(f"Enter password for '{role}': ")
+        credentials[role] = (username, password)
+        print(f"Role '{role}' configured successfully.\n")
+
+    # Fallback to guest crawl if no roles were input
+    if not credentials:
+        print("No roles configured. Proceeding with Unauthenticated guest crawl.")
+        credentials["Guest"] = ("", "")
 
     async with async_playwright() as pw:
         all_role_results: dict = {}
 
-        for role, (username, password) in CREDENTIAL_MATRIX.items():
+        for role, (username, password) in credentials.items():
             result = await crawl_role(role, username, password, pw, all_role_results)
             all_results.append(result)
             all_role_results[role] = result
