@@ -104,7 +104,7 @@ class BACComparator:
             return []
 
         # Load all endpoints grouped by role
-        all_endpoints = self.db.get_endpoints()
+        all_endpoints = self.db.get_all_endpoints()
         if not all_endpoints:
             logger.info("No endpoints in database.")
             return []
@@ -182,7 +182,7 @@ class BACComparator:
 
         # Fallback: use JWT/cookies from DB endpoints
         if self.db:
-            endpoints = self.db.get_endpoints_by_role(role) if hasattr(self.db, 'get_endpoints_by_role') else []
+            endpoints = [ep for ep in self.db.get_all_endpoints() if ep.get("role") == role]
             for ep in endpoints:
                 jwt = ep.get("jwt")
                 if jwt:

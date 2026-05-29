@@ -306,7 +306,7 @@ def run_passive_analysis(db: AHVFDatabase) -> bool:
                 endpoints.append(ep)
     else:
         # Fallback to DB
-        endpoints = db.get_endpoints()
+        endpoints = db.get_all_endpoints()
 
     if not endpoints:
         print("[Pipeline] No endpoints found for passive analysis")
