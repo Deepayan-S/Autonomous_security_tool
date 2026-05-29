@@ -15,6 +15,7 @@ Supports:
 Configuration (env-var overrides with defaults):
   OLLAMA_HOST  = http://localhost:11434   (Ollama API base URL)
   OLLAMA_MODEL = goekdenizguelmez/JOSIEFIED-Qwen3:8b
+  OLLAMA_API_KEY = ""                     (Optional Bearer token for cloud setups)
   OLLAMA_TIMEOUT = 300                   (seconds per request)
 
 Design note: Uses the Ollama REST API directly via `requests` rather
@@ -99,6 +100,7 @@ class OllamaClient:
         self.host = host or os.environ.get("OLLAMA_HOST", DEFAULT_HOST)
         self.model = model or os.environ.get("OLLAMA_MODEL", DEFAULT_MODEL)
         self.timeout = timeout or int(os.environ.get("OLLAMA_TIMEOUT", str(DEFAULT_TIMEOUT)))
+        self.api_key = os.environ.get("OLLAMA_API_KEY", "")
 
         # Strip trailing slash from host
         self.host = self.host.rstrip("/")
@@ -107,6 +109,9 @@ class OllamaClient:
         import requests as _requests
         self._session = _requests.Session()
         self._requests = _requests
+        
+        if self.api_key:
+            self._session.headers.update({"Authorization": f"Bearer {self.api_key}"})
 
         print(f"[Ollama] Client configured: host={self.host}, model={self.model}")
 

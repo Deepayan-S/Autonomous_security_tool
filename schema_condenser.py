@@ -36,9 +36,9 @@ from pathlib import Path
 from typing import Optional
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  DATA STRUCTURES
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 @dataclass
 class CondensedSchema:
@@ -62,9 +62,9 @@ class CondensedSchema:
     form_fields:        dict = field(default_factory=dict)  # form field name -> type
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  TYPE DETECTION (FR-04.2)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 # Regex patterns for value type inference
 UUID_PATTERN = re.compile(
@@ -144,9 +144,9 @@ def _infer_type_from_name(param_name: str) -> str:
     return "STRING"
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  CONTEXT HINTS (FR-04.5)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 # Path segment → inferred function mapping
 CONTEXT_HINT_PATTERNS = {
@@ -201,9 +201,9 @@ def _get_context_hints(path: str) -> list[str]:
     return hints
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  FILE UPLOAD DETECTION (FR-04.3)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 def _detect_file_upload(endpoint: dict) -> tuple[bool, list[str]]:
     """
@@ -254,9 +254,9 @@ def _detect_file_upload(endpoint: dict) -> tuple[bool, list[str]]:
     return is_upload, mime_types
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  PARAMETER EXTRACTION & SANITISATION
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 def _extract_params(endpoint: dict) -> dict[str, str]:
     """
@@ -272,9 +272,17 @@ def _extract_params(endpoint: dict) -> dict[str, str]:
     """
     params = {}
 
-    # 1. Query string parameters
+    # 0. Dynamic Path Segments (e.g. IDOR targets)
     url = endpoint.get("url", "")
     parsed = urllib.parse.urlparse(url)
+    path_segments = parsed.path.strip('/').split('/')
+    for i, segment in enumerate(path_segments):
+        if not segment: continue
+        seg_type = _infer_type(segment)
+        if seg_type in ["INT", "UUID"]:
+            params[f"path_seg_{i}"] = seg_type
+
+    # 1. Query string parameters
     query_params = urllib.parse.parse_qs(parsed.query)
     for name, values in query_params.items():
         # Use first value for type inference, then replace
@@ -346,9 +354,9 @@ def _extract_params(endpoint: dict) -> dict[str, str]:
     return params
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  SCHEMA CONDENSER CLASS
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 class SchemaCondenser:
     """
@@ -384,6 +392,12 @@ class SchemaCondenser:
 
         print(f"[M2] Loaded {len(endpoints)} raw endpoint(s)")
 
+        # Step 1b: Filter out static resources and non-testable endpoints
+        endpoints = self._filter_testable_endpoints(endpoints)
+        if not endpoints:
+            print("[M2] No testable endpoints remain after filtering static resources")
+            return []
+
         # Step 2: Group by schema_hash (FR-04.4 deduplication)
         groups = self._group_by_schema(endpoints)
         print(f"[M2] Grouped into {len(groups)} unique schema(s) (dedup ratio: "
@@ -394,6 +408,12 @@ class SchemaCondenser:
         for schema_hash, group_endpoints in groups.items():
             schema = self._condense_group(schema_hash, group_endpoints)
             schemas.append(schema)
+
+        # Step 3b: Drop schemas with zero injectable parameters
+        before_count = len(schemas)
+        schemas = [s for s in schemas if s.params or s.form_fields or s.has_graphql or s.is_file_upload]
+        if before_count != len(schemas):
+            print(f"[M2] Dropped {before_count - len(schemas)} schema(s) with no injectable parameters")
 
         # Step 4: Sort by endpoint count (most common schemas first)
         schemas.sort(key=lambda s: s.endpoint_count, reverse=True)
@@ -424,7 +444,65 @@ class SchemaCondenser:
 
         return schemas
 
-    # ── Internal Methods ─────────────────────────────────────────
+    # -- Internal Methods -----------------------------------------
+
+    # Extensions that indicate a static, non-testable resource
+    STATIC_EXTENSIONS = {
+        ".html", ".htm", ".js", ".css", ".map",
+        ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".webp",
+        ".woff", ".woff2", ".ttf", ".eot", ".otf",
+        ".pdf", ".zip", ".gz", ".tar",
+        ".mp4", ".webm", ".mp3", ".ogg",
+    }
+
+    def _filter_testable_endpoints(self, endpoints: list[dict]) -> list[dict]:
+        """
+        Remove endpoints that cannot yield real vulnerabilities:
+          - Static files (HTML pages, JS bundles, CSS, images, fonts)
+          - SPA hash-only routes (e.g. /#/dashboard) with no API interaction
+          - Resource files (robots.txt, sitemap.xml, etc.)
+        
+        Keeps: API endpoints, form-handling endpoints, GraphQL, endpoints
+        with query params or POST bodies.
+        """
+        filtered = []
+        dropped = 0
+
+        for ep in endpoints:
+            url = ep.get("url", "")
+            method = ep.get("method", "GET").upper()
+            parsed = urllib.parse.urlparse(url)
+            path = parsed.path.lower()
+
+            # 1. Skip static file extensions
+            ext = Path(path).suffix.lower()
+            if ext in self.STATIC_EXTENSIONS:
+                dropped += 1
+                continue
+
+            # 2. Skip SPA hash-only routes that have no real API path
+            #    e.g. https://csii.in/hrms-lite/#/dashboard
+            #    These are frontend routes, not server endpoints
+            if parsed.fragment and not parsed.query and method == "GET":
+                # Only skip if the path itself is generic (no API path segments)
+                if not any(seg in path for seg in ("api", "graphql", "auth", "rest")):
+                    body = ep.get("body")
+                    if not body:
+                        dropped += 1
+                        continue
+
+            # 3. Skip known non-testable resource paths
+            basename = Path(path).name.lower()
+            if basename in ("robots.txt", "sitemap.xml", "favicon.ico", ".well-known"):
+                dropped += 1
+                continue
+
+            filtered.append(ep)
+
+        if dropped:
+            print(f"[M2] Filtered out {dropped} static/non-testable endpoint(s), keeping {len(filtered)}")
+
+        return filtered
 
     def _load_endpoints(self, json_fallback_path: Optional[str] = None) -> list[dict]:
         """Load endpoints from SQLite or JSON fallback."""
@@ -540,9 +618,9 @@ class SchemaCondenser:
 
     def _print_summary(self, schemas: list[CondensedSchema]):
         """Print a brief summary of the condensed schemas."""
-        print(f"\n{'─'*50}")
+        print(f"\n{'-'*50}")
         print(f"  M2 Condensation Summary")
-        print(f"{'─'*50}")
+        print(f"{'-'*50}")
         print(f"  Total unique schemas : {len(schemas)}")
         print(f"  File upload schemas  : {sum(1 for s in schemas if s.is_file_upload)}")
         print(f"  GraphQL schemas      : {sum(1 for s in schemas if s.has_graphql)}")
@@ -555,9 +633,9 @@ class SchemaCondenser:
         for method, count in sorted(method_counts.items()):
             print(f"    {method:8s} : {count}")
 
-        print(f"{'─'*50}\n")
+        print(f"{'-'*50}\n")
 
-    # ── Formatting for LLM (used by M3) ─────────────────────────
+    # -- Formatting for LLM (used by M3) -------------------------
 
     @staticmethod
     def format_for_llm(schemas: list[CondensedSchema], batch_size: int = 50) -> list[str]:
@@ -604,9 +682,9 @@ class SchemaCondenser:
         return batches
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  STANDALONE TEST
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 if __name__ == "__main__":
     print("\n=== Schema Condenser Test ===\n")

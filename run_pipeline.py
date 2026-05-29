@@ -12,10 +12,10 @@ Can run the full pipeline or individual phases:
 Also supports skipping the crawl if crawl_results.json already exists.
 
 USAGE:
-    python run_pipeline.py                   # Full pipeline
+    python run_pipeline.py                   # Full pipeline (M1 -> M5)
     python run_pipeline.py --phase condense  # M2 only (uses existing crawl data)
     python run_pipeline.py --phase generate  # M3 only (uses existing condensed schemas)
-    python run_pipeline.py --skip-crawl      # M2 + M3 only (reuse crawl data)
+    python run_pipeline.py --skip-crawl      # M2 to M5 only (reuse crawl data)
 """
 
 import argparse
@@ -43,19 +43,13 @@ def run_crawl():
     print(f"  PHASE 1: Stateful Crawler (M1)")
     print(f"{'='*60}\n")
 
-    import asyncio
+    import subprocess
+    import sys
 
-    # Import the Crawler's main function
+    # Run Crawler.py as a subprocess to ensure clean event loop and global state
     try:
-        from Crawler import main as crawler_main
-    except ImportError as e:
-        print(f"[Pipeline] ERROR: Could not import Crawler: {e}")
-        print("[Pipeline] Make sure Crawler.py exists in the project root.")
-        return False
-
-    try:
-        asyncio.run(crawler_main())
-        return True
+        result = subprocess.run([sys.executable, "Crawler.py"])
+        return result.returncode == 0
     except KeyboardInterrupt:
         print("\n[Pipeline] Crawl interrupted by user.")
         return False
@@ -176,6 +170,33 @@ def run_generate(db: AHVFDatabase) -> bool:
 
     return True
 
+def run_executor() -> bool:
+    print(f"\n{'='*60}")
+    print(f"  PHASE 3: Async Payload Executor (M4)")
+    print(f"{'='*60}\n")
+    import asyncio
+    from async_executor import AsyncPayloadExecutor
+    try:
+        executor = AsyncPayloadExecutor(concurrency=500)
+        asyncio.run(executor.run())
+        return True
+    except Exception as e:
+        print(f"[Pipeline] Executor failed: {e}")
+        return False
+
+def run_triage() -> bool:
+    print(f"\n{'='*60}")
+    print(f"  PHASE 4: Triage & Reporting (M5)")
+    print(f"{'='*60}\n")
+    from triage_engine import TriageEngine
+    try:
+        engine = TriageEngine()
+        engine.triage_anomalies()
+        engine.generate_report()
+        return True
+    except Exception as e:
+        print(f"[Pipeline] Triage failed: {e}")
+        return False
 
 # ─────────────────────────────────────────────
 #  PIPELINE ORCHESTRATOR
@@ -189,11 +210,11 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False):
         phase: Which phase(s) to run — "all", "crawl", "condense", "generate"
         skip_crawl: If True, skip crawl even in "all" mode (reuse existing data)
     """
-    print(f"\n{'▓'*60}")
+    print(f"\n{'='*60}")
     print(f"  AHVF — Autonomous Hybrid VAPT Framework")
     print(f"  Pipeline Runner v1.0")
     print(f"  !! For authorized security testing only !!")
-    print(f"{'▓'*60}\n")
+    print(f"{'='*60}\n")
 
     start_time = time.time()
 
@@ -241,14 +262,32 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False):
             if not ok:
                 print("[Pipeline] Payload generation failed.")
                 return
+            if phase == "generate":
+                return
+
+        # ── Phase 3: Execute Fuzzing ──────────────────────────────
+        if phase in ("all", "execute"):
+            ok = run_executor()
+            if not ok:
+                print("[Pipeline] Executor failed.")
+                return
+            if phase == "execute":
+                return
+
+        # ── Phase 4: Triage & Reporting ──────────────────────────
+        if phase in ("all", "triage"):
+            ok = run_triage()
+            if not ok:
+                print("[Pipeline] Triage & Reporting failed.")
+                return
 
         elapsed = time.time() - start_time
-        print(f"\n{'▓'*60}")
+        print(f"\n{'='*60}")
         print(f"  Pipeline complete in {elapsed:.1f}s")
         print(f"  Database: {db.db_path}")
         stats = db.get_stats()
         print(f"  Stats: {stats}")
-        print(f"{'▓'*60}\n")
+        print(f"{'='*60}\n")
 
     finally:
         db.close()
@@ -299,7 +338,7 @@ Examples:
 
     parser.add_argument(
         "--phase",
-        choices=["all", "crawl", "condense", "generate"],
+        choices=["all", "crawl", "condense", "generate", "execute", "triage"],
         default="all",
         help="Which phase to run (default: all)",
     )

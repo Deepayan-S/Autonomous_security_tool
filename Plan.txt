@@ -1,0 +1,197 @@
+
+SOFTWARE REQUIREMENTS SPECIFICATION
+Autonomous Hybrid VAPT Framework (AHVF)
+Version 1.0  |  Classification: CONFIDENTIAL
+Security Engineering Division
+ 
+1. Introduction & Scope
+1.1 Purpose
+This document specifies the software requirements for the Autonomous Hybrid VAPT Framework (AHVF), a standalone security testing utility engineered to identify L1/L2 vulnerabilities—including XSS, SQL Injection, Broken Access Control, and IDOR—across complex, authenticated staging environments. This SRS is intended for the engineering team responsible for design, implementation, and QA of the system.
+1.2 Scope
+AHVF is scoped exclusively for use against environments for which the operator holds explicit written authorization. The system is not a general-purpose scanner. Its architectural decisions (local execution, data anonymization, decoupled AI) are driven by enterprise compliance requirements. Out-of-scope: production environment scanning without explicit change-freeze windows, and any use against systems without a signed Rules of Engagement (RoE) document.
+1.3 Definitions & Acronyms
+AHVF	Autonomous Hybrid VAPT Framework — the system defined herein
+VAPT	Vulnerability Assessment and Penetration Testing
+RoE	Rules of Engagement — the written authorization document
+BAC	Broken Access Control (OWASP A01:2021)
+IDOR	Insecure Direct Object Reference — a subclass of BAC
+LCE	Local Crawl Engine — Module 1 of AHVF
+APC	AI Payload Cache — Module 3 output stored in SQLite
+AEE	Async Execution Engine — Module 4, the high-speed fuzzer
+ATA	AI Triage Agent — Module 5, anomaly classification
+DOM-flow	Full application state captured via Playwright headless browser
+Schema	Anonymized structural representation of an HTTP request body/params
+
+1.4 Design Constraints (Non-Negotiable)
+•	Zero exfiltration of live PII, session tokens, or proprietary data to external APIs.
+•	AI inference must be decoupled from the hot execution path — no inline LLM calls during fuzzing.
+•	All persistent state (schemas, payloads, results) must be stored in a local SQLite database only.
+•	The system must operate within a single operator workstation without cloud compute infrastructure.
+
+2. System Architecture
+2.1 Architectural Overview
+AHVF uses a two-phase, three-tier architecture to separate concerns: (1) stateful reconnaissance, (2) AI-assisted payload synthesis, and (3) high-speed blind execution. The AI tier operates only during cold phases (pre-execution synthesis and post-execution triage) and is never in the critical path of the fuzzing loop.
+
+AHVF — Logical Architecture Flow
+[ M1: Stateful Crawler ] → [ M2: Schema Condenser ] → [ M3: AI Payload Orchestrator ]
+                ↓                                               ↓
+[ SQLite State DB ] ←────────────────────→ [ APC: Payload Cache ]
+                ↓                                               ↓
+[ M4: Async Execution Engine (aiohttp) ] → [ M5: AI Triage & Reporting ]
+                                               ↓
+[ HTML/JSON Report Output ]
+
+2.2 Phase Breakdown
+Phase	Modules Active	AI Involvement
+Phase 0: Config	Config loader, RoE validator	None — fully local
+Phase 1: Recon	M1 Crawler, M2 Condenser	None — fully local
+Phase 2: Synthesis	M3 Orchestrator	Single batch API call (cold)
+Phase 3: Execution	M4 AEE, SQLite	None — AI severed
+Phase 4: Triage	M5 ATA, Report Engine	Selective API calls on anomalies only
+
+3. Functional Requirements
+FR-01 — Configuration & Authorization Gate
+The system must not execute any active testing functions without a validated configuration. This is a hard prerequisite.
+•	FR-01.1: Ingests a YAML/TOML configuration file specifying: target base URL, credential matrix (role → username:password), rate limits, excluded paths (robots.txt + user-defined), and output directory.
+•	FR-01.2: Configuration file must include an RoE acknowledgment field. Execution is blocked if this field is absent or set to false.
+•	FR-01.3: Validates target URL is reachable before proceeding. Exits with an error code if target returns no response within a configurable timeout.
+•	FR-01.4 [NEW]: Reads and enforces a scope whitelist (IP ranges, subdomains). Requests to out-of-scope hosts must be rejected at the HTTP client level, not just filtered post-hoc.
+
+FR-02 — Stateful Crawling & Session Capture (M1)
+The crawler must handle modern SPAs and authenticated multi-role environments. Static HTTP crawlers are insufficient for this use case.
+•	FR-02.1: Deploys Playwright in headless mode to perform DOM-flow capture per credential in the matrix.
+•	FR-02.2: Captures and stores: all endpoint URLs (with method), request/response pairs, active JWTs and session cookies, CSRF tokens, and form structures per session role.
+•	FR-02.3: Executes link-following, form submission (with safe default values), and AJAX call interception via Playwright's network event hooks.
+•	FR-02.4 [NEW — CRITICAL]: Implements a DOM-Mutation Observer pattern to capture dynamically rendered endpoints (e.g., React lazy-loaded routes). Standard link enumeration misses these entirely.
+•	FR-02.5 [NEW — CRITICAL]: Extracts and stores GraphQL introspection schemas if a /graphql endpoint is discovered. GraphQL requires separate payload logic.
+•	FR-02.6 [NEW]: Detects and catalogues API versioning patterns (e.g., /api/v1/ vs /api/v2/) and flags endpoints that exist in older versions but not newer ones as BAC candidates.
+•	FR-02.7 [NEW]: Crawl deduplication using a canonicalized URL fingerprint (normalized query params) stored in SQLite to prevent redundant captures.
+
+FR-03 — BAC / IDOR Autonomous Test Engine (M1 Sub-Module)
+Broken Access Control detection must be fully automated and require zero AI involvement, as the logic is deterministic.
+•	FR-03.1: Cross-pollinates captured endpoints across all session roles. For every URL discovered under Role A, issues the same request using Role B's session tokens.
+•	FR-03.2: Flags a BAC finding if a lower-privilege role receives a 200 response (or equivalent data payload) to a higher-privilege endpoint.
+•	FR-03.3 [NEW — IDOR]: For endpoints with numeric or UUID object identifiers (e.g., /api/users/{id}), executes IDOR probes by substituting sequential integer IDs and UUIDs belonging to other session identities. Flags if cross-tenant data is returned.
+•	FR-03.4 [NEW — CRITICAL]: HTTP verb tampering. For each endpoint, tests all HTTP methods (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS) with each role's token. Some frameworks enforce authorization on GET but not on PUT/DELETE for the same resource.
+•	FR-03.5 [NEW]: Path traversal normalization bypass. Tests alternate encodings of privileged paths (e.g., /admin/../user/../admin/) to detect authorization logic applied to raw string comparison rather than resolved path.
+
+FR-04 — Schema Condensation & Sanitization (M2)
+•	FR-04.1: Strips all HTTP headers except: method, endpoint path, content-type, and parameter list structure.
+•	FR-04.2: Replaces all concrete parameter values with typed placeholders: INT, STRING, UUID, ENUM:[values], BOOL, FLOAT, ARRAY, JWT.
+•	FR-04.3 [NEW — CRITICAL]: Must sanitize file upload endpoints separately, capturing MIME type and filename structure only — never the file content.
+•	FR-04.4 [NEW]: Groups schemas by structural fingerprint. Structurally identical endpoints (same params, different path segment) are deduplicated to a single schema with a count, preventing redundant LLM calls.
+•	FR-04.5 [NEW]: Attaches contextual metadata to each schema: endpoint function inferred from path segments (e.g., /export → likely CSV/XLSX generation, flag for injection via file extension param), which informs AI payload selection.
+
+FR-05 — AI Payload Orchestration (M3)
+•	FR-05.1: Batches deduplicated schemas into a single API request to the configured LLM endpoint. Maximum batch size is configurable (default: 50 schemas per request).
+•	FR-05.2: System prompt enforces a structured JSON response format. LLM must return: payload string, target parameter, vulnerability class, and expected anomalous indicator.
+•	FR-05.3 [NEW — CRITICAL]: Prompt must explicitly request second-order injection payloads for data that is stored and rendered later (e.g., username fields, profile bio). These are architecturally distinct from reflected payloads.
+•	FR-05.4 [NEW]: Prompts must request polyglot payloads for endpoints where both SQL context and HTML reflection are possible (e.g., search results rendered from a database query).
+•	FR-05.5 [NEW]: For file upload endpoints identified in FR-04.3, request server-side template injection (SSTI) payloads targeted at the filename parameter (e.g., {{7*7}}.jpg for Jinja2 detection).
+•	FR-05.6: All API responses are validated against the expected JSON schema before being written to the payload cache. Malformed or refusal responses are logged and skipped.
+•	FR-05.7: After payload cache population, the AI connection is terminated. No further AI calls are made until the triage phase (M5).
+
+FR-06 — Async Execution Engine (M4 / AEE)
+•	FR-06.1: Uses Python asyncio and aiohttp to construct and dispatch HTTP requests. Target throughput: 500–1000 req/s (subject to server rate limiting).
+•	FR-06.2: Loads payloads from the APC (SQLite) and injects them into the corresponding parameter of the baseline request.
+•	FR-06.3: Appends correct session JWT/cookie for each request based on the role under test.
+•	FR-06.4 [NEW — CRITICAL]: Implements an adaptive rate limiter. Detects 429 responses or connection resets and backs off using a configurable exponential backoff with jitter. This prevents trivial DoS of the target and avoids IP bans mid-scan.
+•	FR-06.5 [NEW — CRITICAL]: Handles JWT expiry. Monitors token TTL; re-authenticates via the configured credential matrix when tokens approach expiry. Long scans fail silently if this is not handled.
+•	FR-06.6 [NEW]: Implements a baseline delta checker. Before flagging a response as anomalous, compares response body hash, status code, and content-length against the stored baseline for that endpoint. Reduces false positives from naturally variable endpoints.
+•	FR-06.7 [NEW]: Supports HTTP/2 via aiohttp's built-in H2 support. Certain H2 request smuggling payloads are only testable over HTTP/2.
+•	FR-06.8: Logs all anomalous responses (status codes 500, 502, 503; content-length outliers; reflected payload echo) to the SQLite anomaly table with: timestamp, payload, parameter, endpoint, baseline delta.
+
+FR-07 — AI Triage & Reporting (M5 / ATA)
+•	FR-07.1: Batches anomalous responses from the SQLite anomaly table and submits to the LLM for classification. Context includes: payload, response snippet (truncated to 500 chars), endpoint schema, and expected anomaly indicator from FR-05.2.
+•	FR-07.2: LLM classifies each anomaly as: Confirmed Vulnerability, Likely False Positive, or Requires Manual Review. A confidence score (0.0–1.0) must be returned.
+•	FR-07.3 [NEW]: For Confirmed Vulnerabilities, the LLM must generate: CVE/CWE mapping, CVSS v3.1 base score calculation (with justification for each metric), and a remediation code snippet in the language inferred from the application stack.
+•	FR-07.4: The report engine compiles a structured JSON output and a rendered HTML report. The HTML report must include: executive summary, findings sorted by CVSS score, per-finding details (endpoint, parameter, payload, evidence, remediation), and a remediation priority matrix.
+•	FR-07.5 [NEW]: Report must include a scan coverage matrix showing which endpoints were tested, with which roles, against which vulnerability classes. This is essential for demonstrating scan completeness to stakeholders.
+
+4. Non-Functional Requirements
+NFR-ID	Category	Requirement	Target Metric	Priority
+NFR-01	Performance	Async fuzzing throughput	500–1000 req/s	HIGH
+NFR-02	Performance	Full scan time for 500 endpoints	< 15 minutes	HIGH
+NFR-03	Security	Zero PII/token exfiltration	0 bytes to external API	CRITICAL
+NFR-04	Security	Scope enforcement	100% requests in-scope	CRITICAL
+NFR-05	Reliability	JWT expiry handling	Zero silent auth failures	HIGH
+NFR-06	Reliability	Crash recovery	Resumes from SQLite state	MEDIUM
+NFR-07	Cost	LLM API token reduction vs inline	> 85% reduction	MEDIUM
+NFR-08	Maintainability	Payload schema versioning	SQLite schema migrations	MEDIUM
+NFR-09	Portability	OS support	Linux, macOS, WSL2	HIGH
+NFR-10	Observability	Real-time scan progress	CLI progress bar + log file	LOW
+
+5. Identified Architectural Gaps & Mitigations
+The following were absent from the initial design and represent significant attack surface coverage gaps or operational failure modes:
+
+Gap ID	Missing Component	Risk if Absent	Mitigation (Section)
+G-01	HTTP Verb Tampering	Entire BAC class missed	FR-03.4
+G-02	JWT Expiry Handler	Silent failures in long scans	FR-06.5
+G-03	Adaptive Rate Limiter	IP ban, incidental DoS	FR-06.4
+G-04	Second-Order Injection Payloads	Stored XSS/SQLi undetected	FR-05.3
+G-05	GraphQL Introspection	GraphQL attack surface blind	FR-02.5
+G-06	DOM Mutation Observer	SPA routes not discovered	FR-02.4
+G-07	IDOR Probe Engine	Object-level BAC missed	FR-03.3
+G-08	Scope Whitelist Enforcement	Out-of-scope host access	FR-01.4
+G-09	Baseline Delta Checker	High false positive rate	FR-06.6
+G-10	SSTI via File Upload Filename	SSTI attack surface missed	FR-05.5
+G-11	Scan Coverage Matrix in Report	Cannot prove completeness	FR-07.5
+G-12	Crash Recovery / Resume	Full restart on failure	NFR-06
+
+6. Data Model — SQLite Schema
+All persistent state is stored in a single SQLite file. The schema below defines the core tables. Foreign key constraints must be enforced (PRAGMA foreign_keys = ON).
+
+CREATE TABLE endpoints (   id            INTEGER PRIMARY KEY,   url           TEXT NOT NULL,   method        TEXT NOT NULL,   role          TEXT NOT NULL,   schema_hash   TEXT NOT NULL,        -- dedup fingerprint   baseline_hash TEXT,                 -- response body hash   baseline_status INTEGER,   discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );  CREATE TABLE payload_cache (   id            INTEGER PRIMARY KEY,   schema_hash   TEXT NOT NULL,        -- FK -> endpoints.schema_hash   vuln_class    TEXT NOT NULL,        -- e.g. 'XSS', 'SQLI', 'SSTI'   payload       TEXT NOT NULL,   target_param  TEXT NOT NULL,   expected_indicator TEXT,   FOREIGN KEY (schema_hash) REFERENCES endpoints(schema_hash) );  CREATE TABLE anomalies (   id            INTEGER PRIMARY KEY,   endpoint_id   INTEGER NOT NULL,   payload_id    INTEGER NOT NULL,   status_code   INTEGER,   response_hash TEXT,   baseline_delta TEXT,               -- JSON diff summary   flagged_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,   triage_status TEXT DEFAULT 'pending',  -- pending|confirmed|false_positive|review   cvss_score    REAL,   cwe_id        TEXT,   FOREIGN KEY (endpoint_id) REFERENCES endpoints(id),   FOREIGN KEY (payload_id) REFERENCES payload_cache(id) );
+
+7. Technology Stack
+Component	Library / Tool	Justification
+Headless Browser / Crawler	Playwright (Python)	Best-in-class SPA support; network interception hooks
+Async HTTP Execution	aiohttp + asyncio	Non-blocking I/O; 500-1000 req/s achievable locally
+State Persistence	SQLite (via aiosqlite)	Zero-config; async-compatible; no external DB dependency
+Schema Parsing	Custom Python (stdlib)	No external dependency for data sanitization
+AI Payload Gen / Triage	OpenAI / Anthropic API	Configurable; swap via .env LLM_PROVIDER setting
+Report Rendering	Jinja2 (HTML) + json stdlib	Lightweight; no headless browser needed for reports
+Config Parsing	PyYAML / tomllib (Python 3.11+)	Human-readable RoE config format
+Rate Limit Handling	tenacity	Decorator-based retry/backoff; clean integration with aiohttp
+HTTP/2 Support	aiohttp[speedups] + h2	Required for HTTP/2 verb smuggling tests (G-03)
+GraphQL Introspection	gql (Python GraphQL client)	Schema-aware introspection parsing
+Progress / Logging	rich (Python)	Real-time progress bars and structured log output
+
+8. Risk Register
+Risk ID	Description	Likelihood	Impact	Mitigation
+R-01	LLM API returns safety refusal for payload gen	MEDIUM	HIGH	Defensive QA persona prompt; fallback to local wordlist
+R-02	Target enforces aggressive rate limiting / WAF	HIGH	MEDIUM	Adaptive backoff (FR-06.4); configurable delay floor
+R-03	JWT expiry during long scan	HIGH	HIGH	Token TTL monitor + auto re-auth (FR-06.5)
+R-04	False positive flood degrades report quality	MEDIUM	MEDIUM	Baseline delta checker (FR-06.6); AI triage filter
+R-05	SPA routes not discovered	HIGH	HIGH	DOM Mutation Observer (FR-02.4)
+R-06	Accidental out-of-scope request	LOW	CRITICAL	Scope whitelist at HTTP client layer (FR-01.4)
+R-07	PII leakage in schema sent to LLM	LOW	CRITICAL	M2 sanitization + type-substitution (FR-04.2)
+R-08	Scan interrupted; full restart required	MEDIUM	MEDIUM	SQLite-based resume from last committed state (NFR-06)
+R-09	GraphQL attack surface undetected	MEDIUM	HIGH	Introspection harvesting (FR-02.5)
+
+9. Acceptance Criteria
+The following criteria must be satisfied for the system to be considered ready for authorized use in staging environments:
+
+1.	Scope Guard: The system refuses to issue any HTTP request to a host not in the configured scope whitelist. Verified by test with a scope list excluding the target host — zero requests should be observed in network capture.
+2.	Zero Exfiltration: A full scan run against a test environment containing synthetic PII produces zero outbound API calls containing raw PII, real JWTs, or response body content. Verified via mitmproxy intercept on the LLM API call.
+3.	BAC Detection Rate: Against the OWASP WebGoat or Damn Vulnerable Web Application (DVWA) target with known BAC vulnerabilities, the system achieves >= 90% detection rate.
+4.	JWT Handling: A scan running longer than the configured JWT TTL completes without authentication errors. Verified by setting a 60-second JWT TTL on the test target.
+5.	Performance: A scan of 500 endpoints with 20 payloads each completes in under 15 minutes without rate limiting from the target.
+6.	Report Completeness: Generated HTML report contains: CVSS scores for all confirmed findings, CWE mappings, remediation guidance, and a scan coverage matrix.
+7.	Resume Capability: A scan interrupted at 50% completion resumes from the correct checkpoint when restarted, without re-testing already-completed endpoints.
+
+10. Explicitly Out of Scope
+•	Network-layer vulnerability scanning (port scanning, service fingerprinting) — use nmap/masscan.
+•	Binary exploitation, memory corruption, or reverse engineering.
+•	Automated exploitation or post-exploitation (privilege escalation, lateral movement).
+•	Mobile application testing (APK/IPA analysis).
+•	Social engineering or phishing simulation.
+•	Any use against a production environment without explicit change-freeze window and written approval.
+•	Any use against systems for which a signed RoE document is not on file.
+
+Appendix A — LLM Prompt Templates
+A.1 Payload Generation Prompt (M3)
+SYSTEM: You are a boundary validation QA engineer. You generate test cases to verify that input sanitization filters correctly reject malicious input. Return ONLY a JSON array.  USER: For each schema below, generate test cases. Each test case must be a JSON object with keys: "payload", "target_param", "vuln_class" (one of: XSS, SQLI, SSTI, IDOR, SSRF, PATH_TRAVERSAL, SECOND_ORDER_XSS, POLYGLOT), "expected_indicator" (substring expected in anomalous response, or HTTP status code).  Generate both reflected AND second-order payloads where applicable.  SCHEMAS: [<batch of condensed schemas>]  RESPONSE FORMAT: [{"payload": "...", "target_param": "...", "vuln_class": "...", "expected_indicator": "..."}, ...]
+
+A.2 Triage Prompt (M5)
+SYSTEM: You are a senior penetration tester performing QA review on automated scan results. Classify each anomaly and provide a remediation recommendation.  USER: Classify each of the following anomalies. Return ONLY a JSON array.  Each entry must contain: "anomaly_id", "classification" (one of: CONFIRMED_VULN, FALSE_POSITIVE, MANUAL_REVIEW), "confidence" (0.0-1.0), "cwe_id", "cvss_v3_score", "cvss_vector", "remediation_snippet" (in the detected language stack), "reasoning" (1-2 sentences).  ANOMALIES: [<batch of anomaly records>]

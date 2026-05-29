@@ -2,3 +2,6 @@ playwright
 playwright-stealth
 requests
 aiosqlite
+aiohttp
+PyJWT
+Jinja2

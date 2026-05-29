@@ -93,18 +93,21 @@ ollama pull goekdenizguelmez/JOSIEFIED-Qwen3:8b
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama API base URL |
 | `OLLAMA_MODEL` | `goekdenizguelmez/JOSIEFIED-Qwen3:8b` | Model to use for payload generation |
+| `OLLAMA_API_KEY` | `""` | Optional Bearer token for cloud setups |
 | `OLLAMA_TIMEOUT` | `300` | Timeout per LLM request (seconds) |
 
 Example (Windows PowerShell):
 ```powershell
-$env:OLLAMA_MODEL = "llama3.1:8b"
+$env:OLLAMA_MODEL = "goekdenizguelmez/JOSIEFIED-Qwen3:8b"
 $env:OLLAMA_HOST = "http://localhost:11434"
+$env:OLLAMA_API_KEY = "your-token-here"
 ```
 
 Example (Linux / macOS):
 ```bash
-export OLLAMA_MODEL="llama3.1:8b"
+export OLLAMA_MODEL="goekdenizguelmez/JOSIEFIED-Qwen3:8b"
 export OLLAMA_HOST="http://localhost:11434"
+export OLLAMA_API_KEY="your-token-here"
 ```
 
 ### Crawler Settings (interactive prompts at runtime)
@@ -130,16 +133,18 @@ These can be adjusted in the source if needed:
 
 ## How to Run
 
-### Option A: Full Pipeline (Crawl → Condense → Generate Payloads)
+### Option A: Full Pipeline (Crawl → Condense → Generate → Execute → Triage)
 
 ```bash
 python run_pipeline.py
 ```
 
-This runs all three modules in sequence:
+This runs all five modules in sequence from beginning to end:
 1. **M1 Crawler** — crawls the target, captures endpoints, saves to `results/`
 2. **M2 Schema Condenser** — sanitises and deduplicates endpoint data
 3. **M3 Payload Orchestrator** — sends schemas to Ollama, generates attack payloads
+4. **M4 Async Executor** — fires payloads asynchronously against target
+5. **M5 Triage & Reporting** — evaluates anomalous responses with LLM and generates HTML report
 
 ### Option B: Skip Crawl (reuse existing crawl data)
 
@@ -160,6 +165,12 @@ python run_pipeline.py --phase condense
 
 # Payload generation only (requires condensed schemas)
 python run_pipeline.py --phase generate
+
+# Fuzzing Execution only (requires generated payloads)
+python run_pipeline.py --phase execute
+
+# Triage & Reporting only (requires anomalies in DB)
+python run_pipeline.py --phase triage
 ```
 
 ### Option D: Run Modules Standalone
@@ -178,6 +189,12 @@ python schema_condenser.py
 
 # Test payload generation (reads condensed schemas + calls Ollama)
 python payload_orchestrator.py
+
+# Test async fuzzing executor directly
+python async_executor.py
+
+# Test triage and report generation directly
+python triage_engine.py
 
 # Run crawler directly (without the pipeline wrapper)
 python Crawler.py

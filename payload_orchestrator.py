@@ -42,9 +42,9 @@ from ollama_client import OllamaClient, OllamaError, OllamaJSONParseError
 from schema_condenser import CondensedSchema, SchemaCondenser
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  LLM PROMPT TEMPLATES (SRS Appendix A.1)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 # System prompt adapted from SRS line 194 for the local Ollama model.
 # Uses a "QA engineer" persona to reduce safety refusals (Risk R-01).
@@ -81,9 +81,9 @@ SCHEMAS:
 {schemas}"""
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  STATIC FALLBACK WORDLISTS (Risk R-01)
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 FALLBACK_PAYLOADS = {
     "XSS": [
@@ -134,9 +134,9 @@ FALLBACK_PAYLOADS = {
 }
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  PAYLOAD VALIDATION
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 VALID_VULN_CLASSES = {
     "XSS", "SQLI", "SSTI", "IDOR", "SSRF", "PATH_TRAVERSAL",
@@ -170,9 +170,9 @@ def _validate_payload(payload_dict: dict) -> bool:
     return True
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  PAYLOAD ORCHESTRATOR CLASS
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 class PayloadOrchestrator:
     """
@@ -265,7 +265,7 @@ class PayloadOrchestrator:
 
         return all_payloads
 
-    # ── LLM Generation ───────────────────────────────────────────
+    # -- LLM Generation -------------------------------------------
 
     def _generate_batch_llm(
         self,
@@ -367,7 +367,7 @@ class PayloadOrchestrator:
                 return h
         return None
 
-    # ── Fallback Generation (Risk R-01) ──────────────────────────
+    # -- Fallback Generation (Risk R-01) --------------------------
 
     def _generate_batch_fallback(
         self,
@@ -388,10 +388,20 @@ class PayloadOrchestrator:
             if not schema:
                 continue
 
+            # Skip schemas with no injectable parameters at all
+            all_params = dict(schema.params)
+            # Also include form fields as injectable targets
+            for fname, ftype in schema.form_fields.items():
+                if fname not in all_params:
+                    all_params[fname] = ftype
+
+            if not all_params and not schema.is_file_upload:
+                continue
+
             # Determine which vuln classes to test based on context
             vuln_classes = self._select_vuln_classes(schema)
 
-            for param_name in schema.params.keys():
+            for param_name in all_params.keys():
                 for vuln_class in vuln_classes:
                     class_payloads = FALLBACK_PAYLOADS.get(vuln_class, [])
                     for p in class_payloads:
@@ -453,7 +463,7 @@ class PayloadOrchestrator:
 
         return list(set(classes))  # Deduplicate
 
-    # ── Output ───────────────────────────────────────────────────
+    # -- Output ---------------------------------------------------
 
     def _write_payload_json(self, payloads: list[dict]):
         """Write payloads to a JSON file for inspection."""
@@ -476,9 +486,9 @@ class PayloadOrchestrator:
         print(f"  M3: Payload Orchestrator — Summary")
         print(f"{'='*60}")
         print(f"  Total payloads generated  : {len(payloads)}")
-        print(f"    ├─ From LLM             : {self._total_generated}")
-        print(f"    ├─ From fallback lists   : {self._total_fallback}")
-        print(f"    └─ Invalid (discarded)   : {self._total_invalid}")
+        print(f"    ├- From LLM             : {self._total_generated}")
+        print(f"    ├- From fallback lists   : {self._total_fallback}")
+        print(f"    └- Invalid (discarded)   : {self._total_invalid}")
         print(f"  Time elapsed              : {elapsed:.1f}s")
 
         if payloads:
@@ -495,9 +505,9 @@ class PayloadOrchestrator:
         print(f"{'='*60}\n")
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 #  STANDALONE TEST
-# ─────────────────────────────────────────────
+# ---------------------------------------------
 
 if __name__ == "__main__":
     from database import AHVFDatabase
