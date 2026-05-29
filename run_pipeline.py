@@ -376,16 +376,20 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
     try:
         # ── Phase 1: Crawl ───────────────────────────────────────
         if phase in ("all", "crawl"):
+            if phase == "all":
+                print("[Pipeline] Wiping database state for fresh pipeline run...")
+                db.clear_all()
+                
             if skip_crawl:
                 crawl_json = Path("results") / "crawl_results.json"
                 if crawl_json.exists():
                     print("[Pipeline] Skipping crawl — using existing crawl_results.json")
+                    if phase == "all":
+                        _import_crawl_to_db(db)
                 else:
                     print("[Pipeline] ERROR: --skip-crawl specified but no crawl_results.json found")
                     return
             else:
-                print("[Pipeline] Clearing old database state for fresh run...")
-                db.clear_all()
                 ok = run_crawl()
                 if not ok and phase == "crawl":
                     return
