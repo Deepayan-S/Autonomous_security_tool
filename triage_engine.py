@@ -118,22 +118,7 @@ Output MUST be a valid JSON array."""
                 "remediation_snippet": "Enforce server-side authorization checks on every request. Do not rely on client-side controls.",
             }
 
-        # Server error triggered by injection payload
-        if "server error" in delta.lower() and vuln_class in ("SQLI", "SSTI", "SSRF", "PATH_TRAVERSAL", "COMMAND_INJECTION"):
-            cwe_map = {
-                "SQLI": "CWE-89", "SSTI": "CWE-1336", "SSRF": "CWE-918",
-                "PATH_TRAVERSAL": "CWE-22", "COMMAND_INJECTION": "CWE-78",
-            }
-            return {
-                "anomaly_id": a_id,
-                "classification": "Requires Manual Review",
-                "confidence_score": 0.75,
-                "cve_cwe_mapping": cwe_map.get(vuln_class, ""),
-                "cvss_score": 7.5,
-                "cvss_justification": f"Server error (500) triggered by {vuln_class} payload — likely unhandled injection reaching backend",
-                "remediation_snippet": "Validate and sanitize all user input. Implement proper error handling to prevent stack trace leakage.",
-            }
-
+        # Removed: Server error triggered by injection payload block
         # Path traversal with indicator match
         if vuln_class == "PATH_TRAVERSAL" and "expected string found" in delta.lower():
             return {

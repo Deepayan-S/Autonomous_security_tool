@@ -191,17 +191,23 @@ class BACComparator:
 
         return headers
 
-    async def _make_request(self, session, method: str, url: str, headers: dict) -> Optional[dict]:
+    async def _make_request(self, session, method: str, url: str, headers: dict, data: Optional[str] = None) -> Optional[dict]:
         """Make an HTTP request and return status + response info."""
         try:
             import aiohttp
-            async with session.request(
-                method, url,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10),
-                allow_redirects=False,
-                ssl=False,
-            ) as resp:
+            
+            # If the request is a POST/PUT/PATCH and we have data, we should include the Content-Type
+            # But the original headers are usually already there.
+            kwargs = {
+                "headers": headers,
+                "timeout": aiohttp.ClientTimeout(total=10),
+                "allow_redirects": False,
+                "ssl": False,
+            }
+            if data and method.upper() in ["POST", "PUT", "PATCH"]:
+                kwargs["data"] = data
+
+            async with session.request(method, url, **kwargs) as resp:
                 body = ""
                 try:
                     body = await resp.text(errors="replace")
@@ -251,8 +257,12 @@ class BACComparator:
                 for ep in admin_only[:50]:  # Cap at 50 to prevent overload
                     url = ep["url"]
                     method = ep["method"]
+                    # Get original headers and inject auth
+                    req_headers = dict(ep.get("headers", {}))
+                    req_headers.update(low_headers)
+                    body_data = ep.get("body", "")
 
-                    result = await self._make_request(session, method, url, low_headers)
+                    result = await self._make_request(session, method, url, req_headers, data=body_data)
                     if not result:
                         continue
 
@@ -288,18 +298,32 @@ class BACComparator:
         for role, eps in role_endpoints.items():
             ids = set()
             for ep in eps:
+                has_id = False
                 # Extract numeric segments from URL path
                 parsed = urllib.parse.urlparse(ep["url"])
                 segments = parsed.path.split("/")
                 for seg in segments:
                     if seg.isdigit() and len(seg) <= 10:
                         ids.add(seg)
+                        has_id = True
                     # UUID detection
                     elif re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', seg, re.IGNORECASE):
                         ids.add(seg)
+                        has_id = True
 
-                # Tag endpoints with numeric segments
-                if any(s.isdigit() for s in segments):
+                # Extract IDs from query parameters
+                query_params = urllib.parse.parse_qs(parsed.query)
+                for values in query_params.values():
+                    for val in values:
+                        if val.isdigit() and len(val) <= 10:
+                            ids.add(val)
+                            has_id = True
+                        elif re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', val, re.IGNORECASE):
+                            ids.add(val)
+                            has_id = True
+
+                # Tag endpoints with numeric/UUID segments
+                if has_id:
                     id_endpoints.append(ep)
 
             role_ids[role] = ids
@@ -341,8 +365,10 @@ class BACComparator:
                             new_url = urllib.parse.urlunparse(
                                 parsed._replace(path=new_path)
                             )
+                            
+                            body_data = ep.get("body", "")
 
-                            result = await self._make_request(session, ep["method"], new_url, headers_a)
+                            result = await self._make_request(session, ep["method"], new_url, headers_a, data=body_data)
                             if not result:
                                 continue
 
@@ -384,6 +410,7 @@ class BACComparator:
             for ep in sampled:
                 url = ep["url"]
                 original_method = ep["method"]
+                body_data = ep.get("body", "")
 
                 for verb in ALL_HTTP_VERBS:
                     if verb == original_method:
@@ -391,7 +418,7 @@ class BACComparator:
                     if verb in ("HEAD", "OPTIONS"):
                         continue  # These are usually benign
 
-                    result = await self._make_request(session, verb, url, headers)
+                    result = await self._make_request(session, verb, url, headers, data=body_data)
                     if not result:
                         continue
 
