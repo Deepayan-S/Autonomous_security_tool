@@ -1059,55 +1059,79 @@ async def main():
     print("=" * 70)
 
     print("\n--- Target Configuration ---")
-    TARGET_BASE_URL = input("Enter Target Base URL (e.g., http://example.com/): ").strip()
-    if not TARGET_BASE_URL.endswith('/'):
-        TARGET_BASE_URL += '/'
+    config_path = Path("crawl_config.json")
+    credentials = {}
+    
+    if config_path.exists():
+        print(f"Reading configuration from {config_path}...")
+        import json
+        config_data = json.loads(config_path.read_text(encoding="utf-8"))
         
-    LOGIN_URL = input(f"Enter Login URL [default: {TARGET_BASE_URL}]: ").strip()
-    if not LOGIN_URL:
-        LOGIN_URL = TARGET_BASE_URL
+        TARGET_BASE_URL = config_data.get("target_url", "").strip()
+        if not TARGET_BASE_URL.endswith('/'):
+            TARGET_BASE_URL += '/'
+        LOGIN_URL = config_data.get("login_url", "").strip() or TARGET_BASE_URL
+        USERNAME_SELECTOR = config_data.get("username_selector", "").strip() or "input[name='username']"
+        PASSWORD_SELECTOR = config_data.get("password_selector", "").strip() or "input[name='password']"
+        SUBMIT_SELECTOR = config_data.get("submit_selector", "").strip() or "button[type='submit']"
+        TARGET_HOST = urllib.parse.urlparse(TARGET_BASE_URL).hostname or ""
+        SCOPE_HOSTS = [ TARGET_HOST ] if TARGET_HOST else []
         
-    USERNAME_SELECTOR = input("Enter Username Selector [default: input[name='username']]: ").strip()
-    if not USERNAME_SELECTOR:
-        USERNAME_SELECTOR = "input[name='username']"
+        for cred in config_data.get("credentials", []):
+            role = cred.get("role", "Guest").strip()
+            username = cred.get("username", "").strip()
+            password = cred.get("password", "").strip()
+            credentials[role] = (username, password)
+            
+    else:
+        TARGET_BASE_URL = input("Enter Target Base URL (e.g., http://example.com/): ").strip()
+        if not TARGET_BASE_URL.endswith('/'):
+            TARGET_BASE_URL += '/'
+            
+        LOGIN_URL = input(f"Enter Login URL [default: {TARGET_BASE_URL}]: ").strip()
+        if not LOGIN_URL:
+            LOGIN_URL = TARGET_BASE_URL
+            
+        USERNAME_SELECTOR = input("Enter Username Selector [default: input[name='username']]: ").strip()
+        if not USERNAME_SELECTOR:
+            USERNAME_SELECTOR = "input[name='username']"
+            
+        PASSWORD_SELECTOR = input("Enter Password Selector [default: input[name='password']]: ").strip()
+        if not PASSWORD_SELECTOR:
+            PASSWORD_SELECTOR = "input[name='password']"
+            
+        SUBMIT_SELECTOR = input("Enter Submit Selector [default: button[type='submit']]: ").strip()
+        if not SUBMIT_SELECTOR:
+            SUBMIT_SELECTOR = "button[type='submit']"
+    
+        TARGET_HOST = urllib.parse.urlparse(TARGET_BASE_URL).hostname or ""
+        SCOPE_HOSTS = [ TARGET_HOST ] if TARGET_HOST else []
+    
+        import getpass
+        print("\n--- Crawler Authentication Settings ---")
+        print("Please configure credentials for each crawl role.")
+        print("If you want to perform a Guest/Unauthenticated crawl, leave the inputs empty.\n")
         
-    PASSWORD_SELECTOR = input("Enter Password Selector [default: input[name='password']]: ").strip()
-    if not PASSWORD_SELECTOR:
-        PASSWORD_SELECTOR = "input[name='password']"
-        
-    SUBMIT_SELECTOR = input("Enter Submit Selector [default: button[type='submit']]: ").strip()
-    if not SUBMIT_SELECTOR:
-        SUBMIT_SELECTOR = "button[type='submit']"
-
-    TARGET_HOST = urllib.parse.urlparse(TARGET_BASE_URL).hostname or ""
-    SCOPE_HOSTS = [ TARGET_HOST ] if TARGET_HOST else []
-
+        while True:
+            role = input("Enter crawl role (e.g., 'User', 'Admin') [Press Enter to finish setting up roles]: ").strip()
+            if not role:
+                break
+            username = input(f"Enter username for '{role}': ").strip()
+            if not username:
+                print(f"Skipping credentials configuration for '{role}' (will crawl unauthenticated as '{role}').")
+                credentials[role] = ("", "")
+                continue
+            password = getpass.getpass(f"Enter password for '{role}': ")
+            credentials[role] = (username, password)
+            print(f"Role '{role}' configured successfully.\n")
+    
+        # Fallback to guest crawl if no roles were input
+        if not credentials:
+            print("No roles configured. Proceeding with Unauthenticated guest crawl.")
+            credentials["Guest"] = ("", "")
+            
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     all_results: list[CrawlResult] = []
-
-    import getpass
-    print("\n--- Crawler Authentication Settings ---")
-    print("Please configure credentials for each crawl role.")
-    print("If you want to perform a Guest/Unauthenticated crawl, leave the inputs empty.\n")
-    
-    credentials = {}
-    while True:
-        role = input("Enter crawl role (e.g., 'User', 'Admin') [Press Enter to finish setting up roles]: ").strip()
-        if not role:
-            break
-        username = input(f"Enter username for '{role}': ").strip()
-        if not username:
-            print(f"Skipping credentials configuration for '{role}' (will crawl unauthenticated as '{role}').")
-            credentials[role] = ("", "")
-            continue
-        password = getpass.getpass(f"Enter password for '{role}': ")
-        credentials[role] = (username, password)
-        print(f"Role '{role}' configured successfully.\n")
-
-    # Fallback to guest crawl if no roles were input
-    if not credentials:
-        print("No roles configured. Proceeding with Unauthenticated guest crawl.")
-        credentials["Guest"] = ("", "")
 
     async with async_playwright() as pw:
         all_role_results: dict = {}

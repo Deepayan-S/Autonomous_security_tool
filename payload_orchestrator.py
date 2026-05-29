@@ -486,9 +486,9 @@ class PayloadOrchestrator:
         print(f"  M3: Payload Orchestrator — Summary")
         print(f"{'='*60}")
         print(f"  Total payloads generated  : {len(payloads)}")
-        print(f"    ├- From LLM             : {self._total_generated}")
-        print(f"    ├- From fallback lists   : {self._total_fallback}")
-        print(f"    └- Invalid (discarded)   : {self._total_invalid}")
+        print(f"    |- From LLM             : {self._total_generated}")
+        print(f"    |- From fallback lists   : {self._total_fallback}")
+        print(f"    '- Invalid/discarded    : {self._total_invalid}")
         print(f"  Time elapsed              : {elapsed:.1f}s")
 
         if payloads:
