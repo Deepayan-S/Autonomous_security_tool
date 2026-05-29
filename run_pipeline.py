@@ -1,21 +1,29 @@
 """
 AHVF — Pipeline Runner
 ========================
-Orchestrates the AHVF pipeline: M1 (Crawl) → M2 (Condense) → M3 (Generate Payloads).
+Orchestrates the AHVF pipeline: Crawl → JS Scan → Condense → Generate →
+Passive Analysis → BAC Compare → Execute → Triage.
 
 Can run the full pipeline or individual phases:
   --phase crawl      Run M1 Crawler only
+  --phase js_scan    Run JS Secret Scanner only
   --phase condense   Run M2 Schema Condenser only (requires crawl output)
   --phase generate   Run M3 Payload Orchestrator only (requires condensed schemas)
-  --phase all        Run full pipeline M1 → M2 → M3 (default)
+  --phase passive    Run Passive Security Analyzer only
+  --phase bac        Run BAC/IDOR Cross-Role Comparator only
+  --phase execute    Run M4 Async Executor only
+  --phase triage     Run M5 Triage & Reporting only
+  --phase all        Run full pipeline (default)
 
-Also supports skipping the crawl if crawl_results.json already exists.
+Additional flags:
+  --deep-scan        Enable LLM deep analysis of JS files (slower, more thorough)
+  --skip-crawl       Skip crawl, use existing crawl_results.json
 
 USAGE:
-    python run_pipeline.py                   # Full pipeline (M1 -> M5)
-    python run_pipeline.py --phase condense  # M2 only (uses existing crawl data)
-    python run_pipeline.py --phase generate  # M3 only (uses existing condensed schemas)
-    python run_pipeline.py --skip-crawl      # M2 to M5 only (reuse crawl data)
+    python run_pipeline.py                        # Full pipeline
+    python run_pipeline.py --phase condense       # M2 only
+    python run_pipeline.py --phase js_scan --deep-scan  # JS scan with LLM
+    python run_pipeline.py --skip-crawl            # Reuse crawl data
 """
 
 import argparse
@@ -198,21 +206,164 @@ def run_triage() -> bool:
         print(f"[Pipeline] Triage failed: {e}")
         return False
 
+
+def run_js_scan(db: AHVFDatabase, deep_scan: bool = False) -> bool:
+    """
+    Phase 1b: Run JS Secret Scanner.
+
+    Scans JavaScript files collected during crawling for hardcoded
+    secrets and logic flaws. Uses keyword matching by default,
+    with optional LLM deep scan.
+    """
+    print(f"\n{'='*60}")
+    print(f"  PHASE 1b: JavaScript Scanner")
+    print(f"  Mode: {'Deep Scan (LLM)' if deep_scan else 'Keyword Scan'}")
+    print(f"{'='*60}\n")
+
+    import asyncio
+    import json
+
+    from js_scanner import JSScanner
+
+    # Load JS file URLs from crawl results
+    crawl_json = Path("results") / "crawl_results.json"
+    if not crawl_json.exists():
+        print("[Pipeline] No crawl_results.json found — cannot scan JS files")
+        return False
+
+    raw = json.loads(crawl_json.read_text(encoding="utf-8"))
+    all_js_urls = []
+    all_cookies = {}
+    jwt_token = None
+    role = "unknown"
+
+    for role_result in raw.get("results", []):
+        js_files = role_result.get("js_files", [])
+        all_js_urls.extend(js_files)
+        role = role_result.get("role", "unknown")
+
+        # Extract cookies from first endpoint for auth
+        for ep in role_result.get("endpoints", []):
+            if ep.get("jwt"):
+                jwt_token = ep["jwt"]
+            cookies = ep.get("cookies", [])
+            if isinstance(cookies, list):
+                for c in cookies:
+                    if isinstance(c, dict) and c.get("name"):
+                        all_cookies[c["name"]] = c.get("value", "")
+            if jwt_token:
+                break
+
+    if not all_js_urls:
+        print("[Pipeline] No JS files found in crawl results — skipping JS scan")
+        return True  # Not a failure, just nothing to scan
+
+    # Deduplicate
+    all_js_urls = list(set(all_js_urls))
+    print(f"[Pipeline] Found {len(all_js_urls)} unique JS file(s) to scan")
+
+    scanner = JSScanner(db=db, deep_scan=deep_scan)
+
+    try:
+        findings = asyncio.run(scanner.run(
+            js_urls=all_js_urls,
+            cookies=all_cookies,
+            role=role,
+            jwt_token=jwt_token,
+        ))
+        print(f"[Pipeline] JS scan complete: {len(findings)} finding(s)")
+        return True
+    except Exception as e:
+        print(f"[Pipeline] JS scan failed: {e}")
+        return False
+
+
+def run_passive_analysis(db: AHVFDatabase) -> bool:
+    """
+    Phase 2c: Run Passive Security Analyzer.
+
+    Checks security headers, CORS, cookies, and information disclosure
+    on all crawled endpoints without injecting payloads.
+    """
+    print(f"\n{'='*60}")
+    print(f"  PHASE 2c: Passive Security Analysis")
+    print(f"{'='*60}\n")
+
+    import asyncio
+    import json
+
+    from passive_analyzer import PassiveAnalyzer
+
+    # Load endpoints from crawl results (richer data than DB)
+    crawl_json = Path("results") / "crawl_results.json"
+    endpoints = []
+
+    if crawl_json.exists():
+        raw = json.loads(crawl_json.read_text(encoding="utf-8"))
+        for role_result in raw.get("results", []):
+            for ep in role_result.get("endpoints", []):
+                ep["role"] = role_result.get("role", "unknown")
+                endpoints.append(ep)
+    else:
+        # Fallback to DB
+        endpoints = db.get_endpoints()
+
+    if not endpoints:
+        print("[Pipeline] No endpoints found for passive analysis")
+        return True
+
+    analyzer = PassiveAnalyzer(db=db)
+
+    try:
+        findings = asyncio.run(analyzer.run(endpoints=endpoints))
+        print(f"[Pipeline] Passive analysis complete: {len(findings)} finding(s)")
+        return True
+    except Exception as e:
+        print(f"[Pipeline] Passive analysis failed: {e}")
+        return False
+
+
+def run_bac_compare(db: AHVFDatabase) -> bool:
+    """
+    Phase 2d: Run BAC/IDOR Cross-Role Comparator.
+
+    Compares endpoints across roles to detect broken access control.
+    Requires at least 2 crawled roles — skips gracefully if only 1.
+    """
+    print(f"\n{'='*60}")
+    print(f"  PHASE 2d: BAC/IDOR Cross-Role Comparator")
+    print(f"{'='*60}\n")
+
+    import asyncio
+
+    from bac_comparator import BACComparator
+
+    comparator = BACComparator(db=db)
+
+    try:
+        findings = asyncio.run(comparator.run())
+        print(f"[Pipeline] BAC comparison complete: {len(findings)} finding(s)")
+        return True
+    except Exception as e:
+        print(f"[Pipeline] BAC comparison failed: {e}")
+        return False
+
 # ─────────────────────────────────────────────
 #  PIPELINE ORCHESTRATOR
 # ─────────────────────────────────────────────
 
-def run_pipeline(phase: str = "all", skip_crawl: bool = False):
+def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool = False):
     """
     Run the AHVF pipeline.
 
     Args:
-        phase: Which phase(s) to run — "all", "crawl", "condense", "generate"
+        phase: Which phase(s) to run
         skip_crawl: If True, skip crawl even in "all" mode (reuse existing data)
+        deep_scan: If True, enable LLM deep analysis in JS scanner
     """
     print(f"\n{'='*60}")
     print(f"  AHVF — Autonomous Hybrid VAPT Framework")
-    print(f"  Pipeline Runner v1.0")
+    print(f"  Pipeline Runner v2.0")
     print(f"  !! For authorized security testing only !!")
     print(f"{'='*60}\n")
 
@@ -233,6 +384,8 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False):
                     print("[Pipeline] ERROR: --skip-crawl specified but no crawl_results.json found")
                     return
             else:
+                print("[Pipeline] Clearing old database state for fresh run...")
+                db.clear_all()
                 ok = run_crawl()
                 if not ok and phase == "crawl":
                     return
@@ -240,6 +393,15 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False):
             if phase == "crawl":
                 # Import crawl data into SQLite
                 _import_crawl_to_db(db)
+                return
+
+        # ── Phase 1b: JS Scan ────────────────────────────────────
+        if phase in ("all", "js_scan"):
+            ok = run_js_scan(db, deep_scan=deep_scan)
+            if not ok and phase == "js_scan":
+                print("[Pipeline] JS scan failed.")
+                return
+            if phase == "js_scan":
                 return
 
         # ── Phase 2a: Condense ───────────────────────────────────
@@ -263,6 +425,24 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False):
                 print("[Pipeline] Payload generation failed.")
                 return
             if phase == "generate":
+                return
+
+        # ── Phase 2c: Passive Security Analysis ──────────────────
+        if phase in ("all", "passive"):
+            ok = run_passive_analysis(db)
+            if not ok and phase == "passive":
+                print("[Pipeline] Passive analysis failed.")
+                return
+            if phase == "passive":
+                return
+
+        # ── Phase 2d: BAC/IDOR Cross-Role Comparison ─────────────
+        if phase in ("all", "bac"):
+            ok = run_bac_compare(db)
+            if not ok and phase == "bac":
+                print("[Pipeline] BAC comparison failed.")
+                return
+            if phase == "bac":
                 return
 
         # ── Phase 3: Execute Fuzzing ──────────────────────────────
@@ -325,20 +505,25 @@ def _import_crawl_to_db(db: AHVFDatabase):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AHVF Pipeline Runner — Orchestrates M1 → M2 → M3",
+        description="AHVF Pipeline Runner — Full L1/L2 Security Testing Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Pipeline flow:
+  crawl → js_scan → condense → generate → passive → bac → execute → triage
+
 Examples:
-  python run_pipeline.py                     Full pipeline (crawl → condense → generate)
-  python run_pipeline.py --phase condense    Schema condensation only
-  python run_pipeline.py --phase generate    Payload generation only
-  python run_pipeline.py --skip-crawl        Skip crawl, use existing data
+  python run_pipeline.py                          Full pipeline
+  python run_pipeline.py --phase js_scan          JS secret scan only
+  python run_pipeline.py --phase js_scan --deep-scan  JS scan with LLM analysis
+  python run_pipeline.py --phase passive           Passive security analysis only
+  python run_pipeline.py --phase bac               BAC/IDOR comparison only
+  python run_pipeline.py --skip-crawl              Skip crawl, use existing data
         """,
     )
 
     parser.add_argument(
         "--phase",
-        choices=["all", "crawl", "condense", "generate", "execute", "triage"],
+        choices=["all", "crawl", "js_scan", "condense", "generate", "passive", "bac", "execute", "triage"],
         default="all",
         help="Which phase to run (default: all)",
     )
@@ -347,9 +532,14 @@ Examples:
         action="store_true",
         help="Skip the crawl phase and use existing crawl_results.json",
     )
+    parser.add_argument(
+        "--deep-scan",
+        action="store_true",
+        help="Enable LLM deep analysis of JS files (slower, more thorough)",
+    )
 
     args = parser.parse_args()
-    run_pipeline(phase=args.phase, skip_crawl=args.skip_crawl)
+    run_pipeline(phase=args.phase, skip_crawl=args.skip_crawl, deep_scan=args.deep_scan)
 
 
 if __name__ == "__main__":

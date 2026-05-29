@@ -127,6 +127,7 @@ class CrawlResult:
     graphql_schemas:    list[GraphQLSchema]     = field(default_factory=list)
     api_version_flags:  list[dict]              = field(default_factory=list)  # FR-02.6
     spa_routes:         list[str]               = field(default_factory=list)  # FR-02.4
+    js_files:           list[str]               = field(default_factory=list)  # JS URLs for secret scanning
 
 
 # ─────────────────────────────────────────────
@@ -544,6 +545,8 @@ def _make_request_handler(
     records: list[EndpointRecord],
     current_cookies: list,
     current_jwt: list,  # mutable 1-element list used as a reference
+    js_files: list = None,       # mutable list to collect JS file URLs
+    js_seen: set = None,         # dedup set for JS files
 ):
     async def on_request(request: Request):
         url = request.url
@@ -551,7 +554,19 @@ def _make_request_handler(
 
         if not _in_scope(url) or _is_excluded(url):
             return
-        if url.endswith((".css", ".png", ".jpg", ".gif", ".ico", ".woff", ".svg")):
+
+        # Static assets — drop entirely (never useful for security testing)
+        if url.endswith((".css", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+                         ".woff", ".woff2", ".ttf", ".eot", ".otf",
+                         ".mp4", ".webm", ".mp3", ".ogg", ".map", ".webp")):
+            return
+
+        # JS files — collect for JS secret scanner, don't record as endpoint
+        if url.endswith((".js", ".mjs", ".jsx")):
+            if js_files is not None and js_seen is not None:
+                if url not in js_seen:
+                    js_seen.add(url)
+                    js_files.append(url)
             return
 
         fp = _fingerprint(url, method)
@@ -720,8 +735,11 @@ async def crawl_role(
     # Install MutationObserver on every new page navigation
     await page.add_init_script(DOM_MUTATION_OBSERVER_JS)
 
+    # Sets for JS file deduplication
+    js_seen: set = set()
+
     # Attach network interceptors
-    page.on("request",  _make_request_handler(role, seen_hashes, result.endpoints, current_cookies, current_jwt))
+    page.on("request",  _make_request_handler(role, seen_hashes, result.endpoints, current_cookies, current_jwt, result.js_files, js_seen))
     page.on("response", _make_response_handler(result.endpoints, role))
 
     # ── Step 1: Login (Only if username is provided) ─────────────────

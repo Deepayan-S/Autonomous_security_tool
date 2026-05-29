@@ -9,16 +9,33 @@ An autonomous security testing framework that crawls authenticated web applicati
 ## Architecture
 
 ```
-M1: Stateful Crawler  →  M2: Schema Condenser  →  M3: AI Payload Orchestrator
-     (Crawler.py)        (schema_condenser.py)     (payload_orchestrator.py)
-         │                       │                          │
-         └───── SQLite State DB (database.py) ──────────────┘
-                                                            │
-                                                   Ollama (local LLM)
-                                                   (ollama_client.py)
+                        ┌─────────────────────────────────────────────────────────┐
+                        │              AHVF Pipeline (v2.0)                       │
+                        │                                                         │
+  M1: Stateful Crawler  →  JS Scanner  →  M2: Schema Condenser                  │
+       (Crawler.py)      (js_scanner.py)   (schema_condenser.py)                 │
+            │                                      │                              │
+            └────────── SQLite State DB ───────────┤                              │
+                        (database.py)               │                              │
+                                                    ▼                              │
+  M3: Payload Orchestrator  →  Passive Analyzer  →  BAC Comparator               │
+    (payload_orchestrator.py)  (passive_analyzer.py)  (bac_comparator.py)         │
+            │                                                                      │
+            └──────────────── Ollama (local LLM) ─────────────────────────────────│
+                              (ollama_client.py)                                   │
+                                        │                                          │
+                                        ▼                                          │
+            M4: Async Executor  →  M5: Triage & Reporting                         │
+             (async_executor.py)    (triage_engine.py)                             │
+                                         │                                         │
+                                    HTML/JSON Report                               │
+                                  (report_template.html)                           │
+                        └─────────────────────────────────────────────────────────┘
 ```
 
-**Pipeline runner:** `run_pipeline.py` orchestrates all three modules.
+**Pipeline runner:** `run_pipeline.py` orchestrates all modules.
+
+**Modular login:** `login_agent.py` provides strategy-based authentication (heuristic → LLM → manual fallback) used by the crawler, BAC comparator, and async executor.
 
 ---
 
@@ -29,7 +46,7 @@ M1: Stateful Crawler  →  M2: Schema Condenser  →  M3: AI Payload Orchestrato
 | Python | 3.10+ | Runtime |
 | Playwright | Latest | Headless browser for crawling |
 | Ollama | Latest | Local LLM inference server |
-| LLM Model | `goekdenizguelmez/JOSIEFIED-Qwen3:8b` (or any Ollama-compatible model) | Payload generation |
+| LLM Model | `goekdenizguelmez/JOSIEFIED-Qwen3:8b` (or any Ollama-compatible model) | Payload generation & triage |
 
 ---
 
@@ -60,6 +77,9 @@ This installs:
 - `playwright` + `playwright-stealth` — headless browser for SPA crawling
 - `requests` — HTTP client for Ollama REST API
 - `aiosqlite` — async SQLite (used by future modules)
+- `aiohttp` — async HTTP client for fuzzing, passive analysis, JS scanning
+- `jinja2` — HTML report template rendering
+- `PyJWT` — JWT token decoding and TTL monitoring
 
 ### 3. Install Playwright browser
 
@@ -120,7 +140,7 @@ When you run the crawler, it will interactively ask for:
 - **Submit Selector** — CSS selector for the submit button (defaults to `button[type='submit']`)
 - **Roles & Credentials** — one or more user roles with username/password pairs
 
-The crawler also has dynamic login field detection, so the default selectors work for most applications.
+The crawler also has dynamic login field detection (with LLM fallback), so the default selectors work for most applications.
 
 ### Crawler Hardcoded Defaults (in `Crawler.py`)
 
@@ -133,18 +153,26 @@ These can be adjusted in the source if needed:
 
 ## How to Run
 
-### Option A: Full Pipeline (Crawl → Condense → Generate → Execute → Triage)
+### Option A: Full Pipeline
 
 ```bash
 python run_pipeline.py
 ```
 
-This runs all five modules in sequence from beginning to end:
-1. **M1 Crawler** — crawls the target, captures endpoints, saves to `results/`
-2. **M2 Schema Condenser** — sanitises and deduplicates endpoint data
-3. **M3 Payload Orchestrator** — sends schemas to Ollama, generates attack payloads
-4. **M4 Async Executor** — fires payloads asynchronously against target
-5. **M5 Triage & Reporting** — evaluates anomalous responses with LLM and generates HTML report
+This runs all modules in sequence:
+
+```
+crawl → js_scan → condense → generate → passive → bac → execute → triage
+```
+
+1. **M1 Crawler** — crawls the target, captures endpoints, collects JS files
+2. **JS Scanner** — scans JavaScript for hardcoded secrets and logic flaws
+3. **M2 Schema Condenser** — sanitises and deduplicates endpoint data
+4. **M3 Payload Orchestrator** — sends schemas to Ollama, generates attack payloads
+5. **Passive Analyzer** — checks security headers, CORS, cookies, info disclosure
+6. **BAC Comparator** — cross-role endpoint replay, IDOR probes, verb tampering, path bypass (requires 2+ roles)
+7. **M4 Async Executor** — fires payloads asynchronously against target
+8. **M5 Triage & Reporting** — evaluates anomalous responses with heuristic pre-classification + LLM triage
 
 ### Option B: Skip Crawl (reuse existing crawl data)
 
@@ -160,11 +188,23 @@ python run_pipeline.py --skip-crawl
 # Crawl only
 python run_pipeline.py --phase crawl
 
+# JS secret/logic flaw scan (keyword-based)
+python run_pipeline.py --phase js_scan
+
+# JS scan with LLM deep analysis (slower, finds logic flaws)
+python run_pipeline.py --phase js_scan --deep-scan
+
 # Schema condensation only (requires crawl data in results/)
 python run_pipeline.py --phase condense
 
 # Payload generation only (requires condensed schemas)
 python run_pipeline.py --phase generate
+
+# Passive security analysis (headers, CORS, cookies)
+python run_pipeline.py --phase passive
+
+# BAC/IDOR cross-role comparison (requires 2+ crawled roles)
+python run_pipeline.py --phase bac
 
 # Fuzzing Execution only (requires generated payloads)
 python run_pipeline.py --phase execute
@@ -202,6 +242,37 @@ python Crawler.py
 
 ---
 
+## Modules
+
+### Core Pipeline
+
+| Module | File | Description |
+|---|---|---|
+| M1: Stateful Crawler | `Crawler.py` | Playwright-based headless crawler with SPA support, multi-role authentication, DOM mutation observer, GraphQL introspection, API version detection |
+| M2: Schema Condenser | `schema_condenser.py` | Strips PII, deduplicates endpoints by structural fingerprint, attaches security context hints |
+| M3: Payload Orchestrator | `payload_orchestrator.py` | Batches schemas to Ollama for targeted payload generation (XSS, SQLi, SSTI, IDOR, SSRF, path traversal, polyglot) |
+| M4: Async Executor | `async_executor.py` | High-speed async fuzzing (aiohttp), adaptive rate limiting, JWT expiry handling, baseline delta comparison |
+| M5: Triage Engine | `triage_engine.py` | Heuristic pre-classification + LLM triage, CVSS scoring, CWE mapping, remediation, HTML report generation |
+
+### New Analysis Modules
+
+| Module | File | Description |
+|---|---|---|
+| JS Scanner | `js_scanner.py` | Two-tier JS analysis: fast regex keyword scan (~30 patterns) + optional LLM deep scan for logic flaws |
+| Passive Analyzer | `passive_analyzer.py` | Security header audit, CORS misconfiguration, cookie security, information disclosure detection |
+| BAC Comparator | `bac_comparator.py` | Cross-role endpoint replay (FR-03.1/2), IDOR probes (FR-03.3), HTTP verb tampering (FR-03.4), path normalization bypass (FR-03.5) |
+
+### Infrastructure
+
+| Module | File | Description |
+|---|---|---|
+| Login Agent | `login_agent.py` | Modular authentication with strategy chain: heuristic field detection → LLM-backed selector extraction → manual fallback. Designed for future agentic browser expansion |
+| Ollama Client | `ollama_client.py` | REST API wrapper for all LLM communication (text + JSON generation, batch processing, health check) |
+| Database | `database.py` | SQLite state management — `endpoints`, `payload_cache`, `anomalies`, `passive_findings` tables |
+| Report Template | `report_template.html` | Jinja2 HTML template with executive summary, detailed findings, scan coverage matrix, passive findings |
+
+---
+
 ## Output Files
 
 All outputs are written to the `results/` directory:
@@ -210,11 +281,16 @@ All outputs are written to the `results/` directory:
 |---|---|---|
 | `crawl_results.txt` | M1 Crawler | Human-readable crawl report |
 | `crawl_results.csv` | M1 Crawler | Tabular report with payloads, JWTs, CSRF tokens |
-| `crawl_results.json` | M1 Crawler | Full machine-readable crawl data |
+| `crawl_results.json` | M1 Crawler | Full machine-readable crawl data (including JS file list) |
 | `condensed_schemas.json` | M2 Condenser | Sanitised, deduplicated schemas (no PII) |
 | `payload_cache.json` | M3 Orchestrator | Generated attack payloads (JSON) |
+| `js_scan_results.json` | JS Scanner | Hardcoded secrets and logic flaws found in JS files |
+| `passive_scan_results.json` | Passive Analyzer | Security header, CORS, cookie, info disclosure findings |
+| `bac_scan_results.json` | BAC Comparator | BAC, IDOR, verb tampering, path bypass findings |
+| `report.json` | M5 Triage | Full structured report (all findings merged) |
+| `report.html` | M5 Triage | Rendered HTML report with executive summary |
 
-The SQLite database (`ahvf_state.db`) is created in the project root and stores all state across tables: `endpoints`, `payload_cache`, `anomalies`.
+The SQLite database (`ahvf_state.db`) is created in the project root and stores all state across tables: `endpoints`, `payload_cache`, `anomalies`, `passive_findings`.
 
 ---
 
@@ -225,21 +301,68 @@ Autonomous_security_tool/
 ├── Crawler.py              # M1 — Stateful crawler (Playwright)
 ├── schema_condenser.py     # M2 — Schema sanitisation & deduplication
 ├── payload_orchestrator.py # M3 — AI payload generation via Ollama
+├── async_executor.py       # M4 — Async fuzzing executor (aiohttp)
+├── triage_engine.py        # M5 — Heuristic + LLM triage & reporting
+├── js_scanner.py           # JS secret & logic flaw scanner
+├── passive_analyzer.py     # Passive security analysis (headers/CORS/cookies)
+├── bac_comparator.py       # BAC/IDOR cross-role comparator (FR-03)
+├── login_agent.py          # Modular browser login agent (strategy pattern)
 ├── ollama_client.py        # Ollama REST API wrapper
 ├── database.py             # SQLite state database (SRS Section 6)
 ├── run_pipeline.py         # Pipeline orchestrator (CLI)
+├── report_template.html    # Jinja2 HTML report template
 ├── requirements.txt        # Python dependencies
 ├── .gitignore              # Git exclusions
 ├── README.md               # This file
 ├── LICENSE
 ├── results/                # Output directory (generated at runtime)
-│   ├── crawl_results.txt
-│   ├── crawl_results.csv
-│   ├── crawl_results.json
+│   ├── crawl_results.{txt,csv,json}
 │   ├── condensed_schemas.json
-│   └── payload_cache.json
+│   ├── payload_cache.json
+│   ├── js_scan_results.json
+│   ├── passive_scan_results.json
+│   ├── bac_scan_results.json
+│   ├── report.json
+│   └── report.html
 └── ahvf_state.db           # SQLite database (generated at runtime)
 ```
+
+---
+
+## Vulnerability Coverage
+
+### Active Testing (Fuzzing)
+
+| Vulnerability Class | Detection Method |
+|---|---|
+| Cross-Site Scripting (XSS) | Reflected payload detection (case-insensitive) |
+| SQL Injection (SQLi) | Error-based + blind (status code / body diff) |
+| Server-Side Template Injection (SSTI) | Template expression evaluation in filenames |
+| Path Traversal | Directory traversal payload + file content detection |
+| SSRF | Internal URL probe via parameter injection |
+| Command Injection | OS command payload + error response analysis |
+| Second-Order Injection | Stored payload payloads for delayed execution |
+| Polyglot | Combined SQL/XSS payloads for dual-context endpoints |
+
+### Passive Analysis (No Injection)
+
+| Check | Module | What It Catches |
+|---|---|---|
+| Security Headers | `passive_analyzer.py` | Missing HSTS, CSP, X-Frame-Options, X-Content-Type-Options |
+| CORS Misconfig | `passive_analyzer.py` | Reflected origin, wildcard with credentials, null origin |
+| Cookie Security | `passive_analyzer.py` | Missing HttpOnly, Secure, SameSite on auth cookies |
+| Info Disclosure | `passive_analyzer.py` | Server version headers, debug headers, stack traces |
+| JS Secrets | `js_scanner.py` | API keys, hardcoded passwords, JWT signing keys, internal URLs |
+| JS Logic Flaws | `js_scanner.py` | Client-side auth, DOM XSS sinks, eval(), localStorage token storage |
+
+### Access Control Testing
+
+| Check | Module | SRS Reference |
+|---|---|---|
+| Cross-Role Replay | `bac_comparator.py` | FR-03.1, FR-03.2 |
+| IDOR Probes | `bac_comparator.py` | FR-03.3 |
+| HTTP Verb Tampering | `bac_comparator.py` | FR-03.4 |
+| Path Normalization Bypass | `bac_comparator.py` | FR-03.5 |
 
 ---
 
@@ -254,7 +377,7 @@ If Ollama is not running or the model is unavailable, the pipeline will automati
 - Command Injection
 - Polyglot payloads
 
-This ensures the tool always produces usable output, even without LLM access.
+The JS Scanner Tier 1 (keyword scan) and all passive analysis checks work without Ollama. Only the JS deep scan and LLM triage require an active Ollama instance.
 
 ---
 
@@ -264,7 +387,9 @@ This ensures the tool always produces usable output, even without LLM access.
 |---|---|
 | `OllamaConnectionError: Cannot connect` | Make sure Ollama is running: `ollama serve` |
 | `OllamaModelNotFoundError` | Pull the model: `ollama pull goekdenizguelmez/JOSIEFIED-Qwen3:8b` |
-| Crawler login fails | Check that the target URL is correct and the login selectors match the page |
+| Crawler login fails | Check selectors; the LLM fallback will try to auto-detect fields |
 | No endpoints found | Verify the target is reachable and the scope hosts match |
 | Empty payload cache | Check Ollama logs for errors; the tool will fall back to static payloads |
+| BAC comparator skips | BAC requires 2+ crawled roles — crawl with both Admin and User |
 | `ModuleNotFoundError: requests` | Run `pip install -r requirements.txt` |
+| JS scan finds no files | Ensure crawl ran first and the app loads external JS files |

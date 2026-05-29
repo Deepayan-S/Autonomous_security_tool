@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sqlite3
 import json
 import logging
@@ -28,6 +29,13 @@ For each anomaly, your output object MUST have:
 5. "cvss_score": Provide a CVSS v3.1 base score (float 0.0-10.0) if Confirmed Vulnerability, else null.
 6. "cvss_justification": A brief explanation of the CVSS score, else "".
 7. "remediation_snippet": A secure coding snippet or advice to fix the issue, else "".
+
+CRITICAL TRIAGE RULES (MUST FOLLOW — DO NOT OVERRIDE):
+- The baseline_delta field contains HEURISTIC EVIDENCE from our detection engine. Treat it as ground truth.
+- If baseline_delta contains "Injection payload reflected in response" -> MUST be "Confirmed Vulnerability" or "Requires Manual Review". NEVER "Likely False Positive".
+- If baseline_delta contains "Server Error (Status: 500)" from an injection payload -> MUST be "Confirmed Vulnerability" or "Requires Manual Review". NEVER "Likely False Positive".
+- If baseline_delta contains "Access control bypass" -> MUST be "Confirmed Vulnerability" (CWE-284).
+- Only classify as "Likely False Positive" when baseline_delta is empty OR contains ONLY "Response body differs from baseline" with no other indicators.
 
 Output MUST be a valid JSON array."""
 
@@ -63,26 +71,132 @@ Output MUST be a valid JSON array."""
             
         return results
 
+    def _pre_classify(self, anomaly: dict) -> Optional[dict]:
+        """
+        Deterministic heuristic pre-classification.
+        
+        Auto-classifies obvious cases to skip the LLM entirely.
+        Returns a triage result dict, or None to fall through to LLM.
+        """
+        delta = anomaly.get("baseline_delta", "")
+        vuln_class = anomaly.get("vuln_class", "")
+        a_id = anomaly.get("anomaly_id")
+
+        # Reflected XSS — payload with special chars reflected
+        if "reflected in response" in delta.lower() and vuln_class in ("XSS", "SECOND_ORDER_XSS", "POLYGLOT"):
+            return {
+                "anomaly_id": a_id,
+                "classification": "Confirmed Vulnerability",
+                "confidence_score": 0.95,
+                "cve_cwe_mapping": "CWE-79",
+                "cvss_score": 6.1,
+                "cvss_justification": "Reflected XSS — injection payload echoed in response with special characters intact",
+                "remediation_snippet": "Encode all user input before rendering in HTML context. Use context-aware output encoding.",
+            }
+
+        # SQLi reflection
+        if "reflected in response" in delta.lower() and vuln_class == "SQLI":
+            return {
+                "anomaly_id": a_id,
+                "classification": "Confirmed Vulnerability",
+                "confidence_score": 0.90,
+                "cve_cwe_mapping": "CWE-89",
+                "cvss_score": 8.6,
+                "cvss_justification": "SQL injection payload reflected — likely unsanitized query parameter",
+                "remediation_snippet": "Use parameterized queries / prepared statements. Never concatenate user input into SQL.",
+            }
+
+        # Auth bypass — 401/403 -> 200
+        if "access control bypass" in delta.lower():
+            return {
+                "anomaly_id": a_id,
+                "classification": "Confirmed Vulnerability",
+                "confidence_score": 0.99,
+                "cve_cwe_mapping": "CWE-284",
+                "cvss_score": 9.1,
+                "cvss_justification": "Broken access control — privileged endpoint accessible without proper authorization",
+                "remediation_snippet": "Enforce server-side authorization checks on every request. Do not rely on client-side controls.",
+            }
+
+        # Server error triggered by injection payload
+        if "server error" in delta.lower() and vuln_class in ("SQLI", "SSTI", "SSRF", "PATH_TRAVERSAL", "COMMAND_INJECTION"):
+            cwe_map = {
+                "SQLI": "CWE-89", "SSTI": "CWE-1336", "SSRF": "CWE-918",
+                "PATH_TRAVERSAL": "CWE-22", "COMMAND_INJECTION": "CWE-78",
+            }
+            return {
+                "anomaly_id": a_id,
+                "classification": "Requires Manual Review",
+                "confidence_score": 0.75,
+                "cve_cwe_mapping": cwe_map.get(vuln_class, ""),
+                "cvss_score": 7.5,
+                "cvss_justification": f"Server error (500) triggered by {vuln_class} payload — likely unhandled injection reaching backend",
+                "remediation_snippet": "Validate and sanitize all user input. Implement proper error handling to prevent stack trace leakage.",
+            }
+
+        # Path traversal with indicator match
+        if vuln_class == "PATH_TRAVERSAL" and "expected string found" in delta.lower():
+            return {
+                "anomaly_id": a_id,
+                "classification": "Confirmed Vulnerability",
+                "confidence_score": 0.95,
+                "cve_cwe_mapping": "CWE-22",
+                "cvss_score": 7.5,
+                "cvss_justification": "Path traversal payload triggered expected file content in response",
+                "remediation_snippet": "Validate file paths against an allowlist. Use canonical path resolution and reject any path containing '..'.",
+            }
+
+        return None  # Falls through to LLM triage
+
     def triage_anomalies(self):
-        """Batch process anomalies via LLM."""
+        """Batch process anomalies via heuristic pre-classification + LLM."""
         anomalies = self.fetch_pending_anomalies()
         if not anomalies:
             logger.info("No pending anomalies to triage.")
             return
 
         logger.info(f"Triaging {len(anomalies)} anomalies...")
+
+        # Phase 1: Heuristic pre-classification (deterministic, no LLM)
+        llm_batch = []
+        pre_classified = 0
+
+        for anomaly in anomalies:
+            result = self._pre_classify(anomaly)
+            if result:
+                # Auto-classified — write directly to DB
+                a_id = result["anomaly_id"]
+                self.db.execute("""
+                    UPDATE anomalies
+                    SET triage_status = ?, cvss_score = ?, cwe_id = ?, llm_details = ?
+                    WHERE id = ?
+                """, (
+                    result.get("classification", "Requires Manual Review"),
+                    result.get("cvss_score"),
+                    result.get("cve_cwe_mapping"),
+                    json.dumps(result),
+                    a_id,
+                ))
+                pre_classified += 1
+            else:
+                llm_batch.append(anomaly)
+
+        self.db.commit()
+        logger.info(f"Pre-classified {pre_classified} anomalies heuristically. {len(llm_batch)} remaining for LLM.")
+
+        if not llm_batch:
+            return
         
-        # Process in batches of 5
+        # Phase 2: LLM triage for remaining anomalies
         batch_size = 5
-        total_batches = (len(anomalies) + batch_size - 1) // batch_size
-        
-        for i in range(0, len(anomalies), batch_size):
-            batch = anomalies[i:i+batch_size]
-            user_prompt = json.dumps(batch, indent=2)
-            
-            logger.info(f"Sending batch {i//batch_size + 1}/{total_batches} to LLM...")
+        total_batches = (len(llm_batch) + batch_size - 1) // batch_size
+
+        for i in range(0, len(llm_batch), batch_size):
+            batch = llm_batch[i:i+batch_size]
             
             try:
+                user_prompt = json.dumps(batch, indent=2)
+                logger.info(f"Sending batch {i//batch_size + 1}/{total_batches} to LLM...")
                 response = self.client.generate_json(self.SYSTEM_PROMPT, user_prompt)
                 
                 if isinstance(response, dict):
@@ -135,14 +249,19 @@ Output MUST be a valid JSON array."""
         stats = {
             "Confirmed Vulnerability": 0,
             "Likely False Positive": 0,
-            "Requires Manual Review": 0
+            "Requires Manual Review": 0,
+            "pending": 0,
         }
         
         for row in cursor.fetchall():
             d = dict(row)
-            stats[d["triage_status"]] = stats.get(d["triage_status"], 0) + 1
+            status = d.get("triage_status", "pending")
+            stats[status] = stats.get(status, 0) + 1
             if d.get("llm_details"):
-                d["llm_details"] = json.loads(d["llm_details"])
+                try:
+                    d["llm_details"] = json.loads(d["llm_details"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
             findings.append(d)
 
         # 2. Compute Coverage Matrix
@@ -155,10 +274,24 @@ Output MUST be a valid JSON array."""
         
         coverage = [dict(r) for r in cursor.fetchall()]
 
+        # 3. Fetch passive findings (JS scanner, passive analyzer, BAC comparator)
+        passive_findings = []
+        try:
+            passive_cursor = self.db.execute(
+                "SELECT * FROM passive_findings ORDER BY "
+                "CASE severity WHEN 'Critical' THEN 1 WHEN 'High' THEN 2 "
+                "WHEN 'Medium' THEN 3 WHEN 'Low' THEN 4 ELSE 5 END"
+            )
+            passive_findings = [dict(r) for r in passive_cursor.fetchall()]
+        except sqlite3.OperationalError:
+            # Table may not exist in older DBs
+            pass
+
         report_data = {
             "summary": stats,
             "findings": findings,
-            "coverage": coverage
+            "coverage": coverage,
+            "passive_findings": passive_findings,
         }
 
         # Dump JSON

@@ -98,6 +98,27 @@ CREATE INDEX IF NOT EXISTS idx_payload_cache_schema_hash
 ON payload_cache(schema_hash);
 """
 
+# Passive findings table for JS scanner, passive analyzer, BAC comparator
+CREATE_PASSIVE_FINDINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS passive_findings (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT    NOT NULL,
+    check_type      TEXT    NOT NULL,
+    finding         TEXT    NOT NULL,
+    severity        TEXT    NOT NULL,
+    evidence        TEXT,
+    cwe_id          TEXT,
+    remediation     TEXT,
+    role            TEXT,
+    discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+CREATE_PASSIVE_FINDINGS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_passive_findings_severity
+ON passive_findings(severity);
+"""
+
 
 # ─────────────────────────────────────────────
 #  DATABASE CLASS
@@ -140,8 +161,10 @@ class AHVFDatabase:
         conn.execute(CREATE_ENDPOINTS_TABLE)
         conn.execute(CREATE_PAYLOAD_CACHE_TABLE)
         conn.execute(CREATE_ANOMALIES_TABLE)
+        conn.execute(CREATE_PASSIVE_FINDINGS_TABLE)
         conn.execute(CREATE_SCHEMA_HASH_INDEX)
         conn.execute(CREATE_PAYLOAD_SCHEMA_INDEX)
+        conn.execute(CREATE_PASSIVE_FINDINGS_INDEX)
         conn.commit()
         print(f"[DB] Database initialized at {self.db_path}")
 
@@ -340,6 +363,78 @@ class AHVFDatabase:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    # ── Passive Findings (JS Scanner / Passive Analyzer / BAC Comparator → DB) ─
+
+    def insert_passive_findings(self, findings: list[dict]) -> int:
+        """
+        Bulk insert passive findings from any analysis module.
+
+        Each dict should have: url, check_type, finding, severity.
+        Optional: evidence, cwe_id, remediation, role.
+
+        check_type values: 'header', 'cors', 'cookie', 'info_disclosure',
+            'js_secret', 'js_logic_flaw', 'bac', 'idor', 'verb_tampering', 'path_bypass'
+        severity values: 'Critical', 'High', 'Medium', 'Low', 'Info'
+        """
+        conn = self.connect()
+        inserted = 0
+
+        for f in findings:
+            conn.execute(
+                """
+                INSERT INTO passive_findings
+                    (url, check_type, finding, severity, evidence,
+                     cwe_id, remediation, role)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f.get("url", ""),
+                    f.get("check_type", "unknown"),
+                    f.get("finding", ""),
+                    f.get("severity", "Info"),
+                    f.get("evidence"),
+                    f.get("cwe_id"),
+                    f.get("remediation"),
+                    f.get("role"),
+                ),
+            )
+            inserted += 1
+
+        conn.commit()
+        print(f"[DB] Inserted {inserted} passive finding(s)")
+        return inserted
+
+    def get_passive_findings(self, check_type: Optional[str] = None) -> list[dict]:
+        """Retrieve passive findings, optionally filtered by check_type."""
+        conn = self.connect()
+        if check_type:
+            cursor = conn.execute(
+                "SELECT * FROM passive_findings WHERE check_type = ? ORDER BY id",
+                (check_type,),
+            )
+        else:
+            cursor = conn.execute("SELECT * FROM passive_findings ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_passive_findings_summary(self) -> dict:
+        """Return counts grouped by severity and check_type."""
+        conn = self.connect()
+        summary = {"by_severity": {}, "by_check_type": {}}
+
+        cursor = conn.execute(
+            "SELECT severity, COUNT(*) as cnt FROM passive_findings GROUP BY severity"
+        )
+        for row in cursor.fetchall():
+            summary["by_severity"][row["severity"]] = row["cnt"]
+
+        cursor = conn.execute(
+            "SELECT check_type, COUNT(*) as cnt FROM passive_findings GROUP BY check_type"
+        )
+        for row in cursor.fetchall():
+            summary["by_check_type"][row["check_type"]] = row["cnt"]
+
+        return summary
+
     # ── Utility ──────────────────────────────────────────────────
 
     def clear_all(self):
@@ -348,6 +443,7 @@ class AHVFDatabase:
         conn.execute("DELETE FROM anomalies")
         conn.execute("DELETE FROM payload_cache")
         conn.execute("DELETE FROM endpoints")
+        conn.execute("DELETE FROM passive_findings")
         conn.commit()
         print("[DB] All tables cleared")
 
@@ -355,7 +451,7 @@ class AHVFDatabase:
         """Return row counts for all tables."""
         conn = self.connect()
         stats = {}
-        for table in ("endpoints", "payload_cache", "anomalies"):
+        for table in ("endpoints", "payload_cache", "anomalies", "passive_findings"):
             cursor = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}")
             stats[table] = cursor.fetchone()["cnt"]
         return stats

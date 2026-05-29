@@ -295,6 +295,47 @@
         </div>
         {% endif %}
 
+        <!-- Passive Security Findings -->
+        {% if report.passive_findings %}
+        <h2>Passive Security Findings</h2>
+        <div class="card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Severity</th>
+                        <th>Finding</th>
+                        <th>URL</th>
+                        <th>CWE</th>
+                        <th>Remediation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pf in report.passive_findings %}
+                    <tr>
+                        <td><span class="badge" style="background: var(--surface-hover); color: white;">{{ pf.check_type }}</span></td>
+                        <td>
+                            {% if pf.severity == "Critical" %}
+                                <span class="badge cvss-high">Critical</span>
+                            {% elif pf.severity == "High" %}
+                                <span class="badge cvss-high">High</span>
+                            {% elif pf.severity == "Medium" %}
+                                <span class="badge cvss-med">Medium</span>
+                            {% else %}
+                                <span class="badge cvss-low">{{ pf.severity }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ pf.finding }}</td>
+                        <td><code>{{ pf.url[:80] }}{% if pf.url|length > 80 %}…{% endif %}</code></td>
+                        <td>{{ pf.cwe_id or '' }}</td>
+                        <td style="font-size: 0.85rem; color: var(--text-muted);">{{ pf.remediation or '' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
     </div>
 </body>
 </html>

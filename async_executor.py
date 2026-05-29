@@ -129,11 +129,22 @@ class BaselineDeltaChecker:
                 delta["indicator"] = f"Expected string found in response body"
                 is_anomaly = True
                 
-        # 3. Payload Reflection (XSS/SQLi — flag if special chars reflected verbatim)
-        if payload and payload in resp_body:
-            if any(c in payload for c in ["<", ">", "'", "\"", "(", ")"]):
-                delta["reflection"] = "Injection payload reflected verbatim in response"
-                is_anomaly = True
+        # 3. Payload Reflection (XSS/SQLi — flag if special chars reflected)
+        #    Case-insensitive + URL-decoded matching to catch app transformations
+        if payload:
+            payload_lower = payload.lower()
+            body_lower = resp_body.lower()
+            # Also check URL-decoded form for encoded reflections
+            try:
+                import urllib.parse
+                decoded_body = urllib.parse.unquote(resp_body).lower()
+            except Exception:
+                decoded_body = body_lower
+
+            if payload_lower in body_lower or payload_lower in decoded_body:
+                if any(c in payload for c in ["<", ">", "'", "\"", "(", ")"]):
+                    delta["reflection"] = "Injection payload reflected in response"
+                    is_anomaly = True
 
         # 4. Baseline comparison (ONLY if we have valid baseline data)
         if has_baseline:
@@ -324,7 +335,7 @@ class AsyncPayloadExecutor:
             base_body = task["base_body"] or "{}"
             try:
                 body_json = json.loads(base_body)
-                if target in body_json:
+                if isinstance(body_json, dict) and target in body_json:
                     body_json[target] = payload
                 injected_kwargs["json"] = body_json
             except json.JSONDecodeError:
@@ -337,25 +348,25 @@ class AsyncPayloadExecutor:
 
     async def execute_task(self, session: aiohttp.ClientSession, task: dict):
         async with self.semaphore:
-            # Token management (FR-06.5)
-            valid_jwt = await self.token_manager.get_valid_token(task["role"], task["jwt"])
-            
-            headers = json.loads(task["headers"]) if task["headers"] else {}
-            if valid_jwt:
-                headers["Authorization"] = f"Bearer {valid_jwt}"
-            
-            cookies = json.loads(task["cookies"]) if task["cookies"] else {}
-            # Flatten cookies if they are a list of dicts from playwright
-            if isinstance(cookies, list):
-                cookies = {c["name"]: c["value"] for c in cookies if "name" in c}
-
-            # Injection (FR-06.2)
-            inject_kwargs = self._inject_payload(task)
-
-            # Execution (FR-06.1 & FR-06.4 & FR-06.7)
-            # Note: aiohttp does not natively support HTTP/2. We proceed with HTTP/1.1 
-            # while acknowledging the FR-06.7 requirement constraint.
             try:
+                # Token management (FR-06.5)
+                valid_jwt = await self.token_manager.get_valid_token(task["role"], task["jwt"])
+                
+                headers = json.loads(task["headers"]) if task["headers"] else {}
+                if valid_jwt:
+                    headers["Authorization"] = f"Bearer {valid_jwt}"
+                
+                cookies = json.loads(task["cookies"]) if task["cookies"] else {}
+                # Flatten cookies if they are a list of dicts from playwright
+                if isinstance(cookies, list):
+                    cookies = {c["name"]: c["value"] for c in cookies if "name" in c}
+
+                # Injection (FR-06.2)
+                inject_kwargs = self._inject_payload(task)
+
+                # Execution (FR-06.1 & FR-06.4 & FR-06.7)
+                # Note: aiohttp does not natively support HTTP/2. We proceed with HTTP/1.1 
+                # while acknowledging the FR-06.7 requirement constraint.
                 resp = await self.rate_limiter.request(
                     session, 
                     method=task["method"], 
