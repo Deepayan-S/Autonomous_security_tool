@@ -1,0 +1,14 @@
+{
+  "target_url": "https://csii.in/hrms-lite/#/",
+  "login_url": "https://csii.in/hrms-lite/#/account/login",
+  "username_selector": "input[name='username']",
+  "password_selector": "input[name='password']",
+  "submit_selector": "button[type='submit']",
+  "credentials": [
+    {
+      "role": "Admin",
+      "username": "spk@csii.in",
+      "password": "Spk@1234"
+    }
+  ]
+}

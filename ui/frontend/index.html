@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AHVF — Autonomous Security Assessment</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Barlow+Condensed:wght@400;500;600;700;800&family=Barlow:wght@300;400;500;600&display=swap');
+:root{
+  --bg0:#050810;--bg1:#080d18;--bg2:#0c1322;--bg3:#101929;--bgc:#0a1120;--bgc2:#0d1528;
+  --border:rgba(0,212,170,.1);--borderB:rgba(0,212,170,.25);--borderH:rgba(0,212,170,.45);
+  --ac:#00d4aa;--ac2:#00ffcc;--acg:rgba(0,212,170,.12);
+  --red:#f0384a;--redb:rgba(240,56,74,.12);--redB:rgba(240,56,74,.3);
+  --ora:#ff6b35;--orab:rgba(255,107,53,.12);
+  --yel:#f5c518;--yelb:rgba(245,197,24,.12);
+  --grn:#22e574;--grnb:rgba(34,229,116,.12);
+  --blu:#3d9df5;--blub:rgba(61,157,245,.12);
+  --t1:#e4f0ec;--t2:#7aa898;--t3:#3a5548;
+  --mono:'Space Mono',monospace;--head:'Barlow Condensed',sans-serif;--body:'Barlow',sans-serif;
+  --r:8px;--rl:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--body);background:var(--bg0);color:var(--t1);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;
+  background:radial-gradient(ellipse 80% 60% at 50% -10%,rgba(0,212,170,.06) 0%,transparent 60%);
+  pointer-events:none;z-index:0}
+/* TOPBAR */
+.topbar{position:sticky;top:0;z-index:100;background:rgba(5,8,16,.95);
+  backdrop-filter:blur(16px);border-bottom:1px solid var(--border);
+  padding:0 28px;display:flex;align-items:center;justify-content:space-between;height:58px}
+.logo{font-family:var(--head);font-size:24px;font-weight:800;color:var(--ac2);
+  letter-spacing:3px;text-transform:uppercase;display:flex;align-items:center;gap:10px}
+.logo-icon{width:28px;height:28px;border:2px solid var(--ac);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;font-size:14px}
+.topbar-right{display:flex;align-items:center;gap:14px}
+.status-pill{font-family:var(--mono);font-size:11px;padding:4px 12px;
+  border-radius:20px;border:1px solid var(--ac);color:var(--ac);
+  display:flex;align-items:center;gap:6px}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--ac)}
+.scanning .status-dot{animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+/* WRAPPER */
+.wrap{position:relative;z-index:1;max-width:1220px;margin:0 auto;padding:28px 24px 80px}
+/* MODAL */
+.modal-ov{position:fixed;inset:0;background:rgba(5,8,16,.97);backdrop-filter:blur(10px);
+  z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--bgc);border:1px solid var(--borderB);border-radius:var(--rl);
+  padding:40px;max-width:580px;width:100%;position:relative;overflow:hidden}
+.modal::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,transparent,var(--ac),transparent)}
+.modal-lock{font-size:42px;margin-bottom:18px;filter:drop-shadow(0 0 14px rgba(0,212,170,.4))}
+.modal h2{font-family:var(--head);font-size:30px;font-weight:800;color:var(--ac2);
+  letter-spacing:2px;margin-bottom:6px}
+.modal-sub{font-size:13px;color:var(--t2);margin-bottom:18px;line-height:1.5}
+.warn-box{background:rgba(240,56,74,.08);border:1px solid rgba(240,56,74,.25);
+  border-radius:var(--r);padding:14px 16px;margin-bottom:18px;
+  font-size:12px;color:#ff9999;line-height:1.6}
+.check-list{margin:16px 0;display:flex;flex-direction:column;gap:0}
+.chk-item{display:flex;align-items:flex-start;gap:10px;padding:9px 0;
+  border-bottom:1px solid var(--border);font-size:13px;color:var(--t2);line-height:1.5}
+.chk-item:last-child{border-bottom:none}
+.chk-dot{width:5px;height:5px;border-radius:50%;background:var(--ac);margin-top:6px;flex-shrink:0}
+.agree-block{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;
+  background:var(--acg);border:1px solid var(--borderB);border-radius:var(--r);
+  margin:22px 0 20px;cursor:pointer}
+.agree-block input{width:18px;height:18px;accent-color:var(--ac);cursor:pointer;flex-shrink:0;margin-top:2px}
+.agree-block label{font-size:13px;color:var(--t1);cursor:pointer;line-height:1.6;font-weight:500}
+/* BUTTONS */
+.btn-go{width:100%;background:var(--ac);color:#050810;border:none;border-radius:var(--r);
+  padding:15px;font-family:var(--head);font-size:18px;font-weight:800;
+  letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.btn-go:hover{background:var(--ac2);transform:translateY(-2px);box-shadow:0 8px 28px rgba(0,212,170,.3)}
+.btn-go:disabled{background:var(--t3);color:#1a3030;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-sec{background:transparent;color:var(--ac);border:1px solid var(--borderB);
+  border-radius:var(--r);padding:9px 18px;font-family:var(--head);font-size:13px;
+  font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.btn-sec:hover{background:var(--acg);border-color:var(--ac)}
+/* SCAN FORM */
+#scanForm{display:none}
+.scard{background:var(--bgc);border:1px solid var(--border);border-radius:var(--rl);
+  padding:30px;margin-bottom:20px}
+.scard-title{font-family:var(--head);font-size:12px;font-weight:700;color:var(--ac);
+  letter-spacing:2.5px;text-transform:uppercase;margin-bottom:20px;
+  display:flex;align-items:center;gap:8px}
+.scard-title::before{content:'';width:16px;height:2px;background:var(--ac)}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.fgrp{display:flex;flex-direction:column;gap:6px}
+.fgrp.full{grid-column:1/-1}
+.fgrp label{font-family:var(--mono);font-size:10px;color:var(--t2);
+  letter-spacing:1.5px;text-transform:uppercase}
+.fgrp input{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);
+  padding:11px 14px;font-family:var(--mono);font-size:13px;color:var(--t1);
+  outline:none;transition:border-color .2s}
+.fgrp input:focus{border-color:var(--ac);box-shadow:0 0 0 3px var(--acg)}
+.fgrp input::placeholder{color:var(--t3)}
+.opts{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.opt-lbl{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--t2);
+  cursor:pointer;padding:7px 14px;border:1px solid var(--border);border-radius:20px;
+  transition:all .2s;user-select:none}
+.opt-lbl:hover{border-color:var(--ac);color:var(--t1)}
+.opt-lbl input{accent-color:var(--ac)}
+.scanrow{display:flex;gap:14px;margin-top:22px;align-items:center}
+.btn-scan{flex:1;background:linear-gradient(135deg,var(--ac) 0%,#00a880 100%);
+  color:#050810;border:none;border-radius:var(--r);padding:17px;
+  font-family:var(--head);font-size:20px;font-weight:800;letter-spacing:2px;
+  text-transform:uppercase;cursor:pointer;transition:all .3s;position:relative;overflow:hidden}
+.btn-scan:hover{transform:translateY(-2px);box-shadow:0 10px 35px rgba(0,212,170,.35)}
+.btn-scan::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);
+  transform:translateX(-100%);transition:transform .5s}
+.btn-scan:hover::after{transform:translateX(100%)}
+/* PROGRESS */
+#progressSec{display:none}
+.prog-card{background:var(--bgc);border:1px solid var(--border);border-radius:var(--rl);
+  padding:28px 30px;margin-bottom:20px}
+.prog-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.prog-title{font-family:var(--head);font-size:16px;font-weight:700;color:var(--t1);letter-spacing:1px}
+.prog-pct{font-family:var(--mono);font-size:24px;color:var(--ac2);font-weight:700}
+.pbar-bg{height:7px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-bottom:22px}
+.pbar-fill{height:100%;border-radius:4px;
+  background:linear-gradient(90deg,var(--ac),var(--ac2));
+  transition:width .5s ease;width:0%;position:relative}
+.pbar-fill::after{content:'';position:absolute;right:-1px;top:-3px;
+  width:13px;height:13px;border-radius:50%;background:var(--ac2);
+  box-shadow:0 0 10px var(--ac2)}
+.log-console{background:#020508;border:1px solid rgba(0,212,170,.12);
+  border-radius:var(--r);padding:14px 16px;font-family:var(--mono);
+  font-size:11px;height:200px;overflow-y:auto;margin-top:18px;line-height:1.7;white-space:pre-wrap;}
+.log-line .ts{color:var(--t3)}
+.log-line .ok{color:var(--grn)}
+.log-line .warn{color:var(--yel)}
+.log-line .error{color:var(--red)}
+.log-line .scan{color:var(--ac)}
+.log-line .info{color:var(--blu)}
+/* RESULTS */
+#resultsSec{display:none}
+.sec-title{font-family:var(--head);font-size:24px;font-weight:800;color:var(--t1);
+  margin-bottom:20px;letter-spacing:1px;display:flex;align-items:center;gap:14px}
+.sec-title::after{content:'';flex:1;height:1px;background:var(--border)}
+/* Score row */
+.score-row{display:grid;grid-template-columns:210px 1fr;gap:18px;margin-bottom:20px}
+.score-card{background:var(--bgc);border:1px solid var(--border);border-radius:var(--rl);
+  padding:26px 20px;display:flex;flex-direction:column;align-items:center;text-align:center;
+  position:relative;overflow:hidden}
+.score-card::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--ac),transparent)}
+.score-lbl{font-family:var(--mono);font-size:10px;color:var(--t2);
+  letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+.score-num{font-family:var(--head);font-size:68px;font-weight:800;line-height:1;margin-bottom:6px}
+.score-grade{font-family:var(--head);font-size:17px;font-weight:800;
+  letter-spacing:2px;padding:4px 16px;border-radius:20px}
+.sum-stats{background:var(--bgc);border:1px solid var(--border);border-radius:var(--rl);padding:20px 22px}
+.cnt-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.cnt-box{text-align:center;padding:12px;border-radius:var(--r)}
+.cnt-box.crit{background:var(--redb);border:1px solid var(--redB)}
+.cnt-box.high{background:var(--orab);border:1px solid rgba(255,107,53,.28)}
+.cnt-box.med{background:var(--yelb);border:1px solid rgba(245,197,24,.28)}
+.cnt-box.low{background:var(--grnb);border:1px solid rgba(34,229,116,.28)}
+.cnt-num{font-family:var(--head);font-size:34px;font-weight:800;line-height:1}
+.cnt-box.crit .cnt-num{color:var(--red)}
+.cnt-box.high .cnt-num{color:var(--ora)}
+.cnt-box.med  .cnt-num{color:var(--yel)}
+.cnt-box.low  .cnt-num{color:var(--grn)}
+.cnt-lbl{font-family:var(--mono);font-size:10px;color:var(--t2);margin-top:4px;
+  text-transform:uppercase;letter-spacing:1px}
+.meta-info{font-family:var(--mono);font-size:11px;color:var(--t2);display:flex;flex-direction:column;gap:5px}
+.meta-info span{color:var(--ac)}
+/* Charts */
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px}
+.chart-card{background:var(--bgc);border:1px solid var(--border);border-radius:var(--rl);padding:20px}
+.chart-title{font-family:var(--head);font-size:13px;font-weight:700;color:var(--t2);
+  letter-spacing:1.5px;text-transform:uppercase;margin-bottom:16px}
+.ch-wrap{height:200px}
+/* Report btns */
+.rpt-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+.btn-rpt{display:flex;align-items:center;gap:8px;padding:9px 18px;
+  border-radius:var(--r);font-family:var(--head);font-size:13px;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all .2s;
+  background:var(--bgc);border:1px solid var(--border);color:var(--t2);
+  text-decoration:none}
+.btn-rpt:hover{border-color:var(--ac);color:var(--ac)}
+/* Tabs */
+.tabs{display:flex;gap:2px;margin-bottom:18px;overflow-x:auto;flex-wrap:nowrap}
+.tab{background:transparent;border:1px solid var(--border);
+  border-radius:var(--r) var(--r) 0 0;padding:10px 18px;
+  font-family:var(--head);font-size:12px;font-weight:700;color:var(--t2);
+  letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:all .2s;
+  white-space:nowrap}
+.tab:hover{color:var(--t1)}
+.tab.active{background:var(--bgc);border-bottom-color:var(--bgc);color:var(--ac2);
+  border-top:2px solid var(--ac)}
+.tp{display:none}
+.tp.active{display:block}
+/* Vuln cards */
+.vcards{display:flex;flex-direction:column;gap:12px}
+.vc{background:var(--bgc2);border-radius:var(--r);border-left:4px solid;
+  padding:16px 18px;transition:transform .15s;cursor:pointer}
+.vc:hover{transform:translateX(3px)}
+.vc.critical{border-color:var(--red)}
+.vc.high{border-color:var(--ora)}
+.vc.medium{border-color:var(--yel)}
+.vc.low{border-color:var(--grn)}
+.vc-hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.vc-name{font-family:var(--head);font-size:15px;font-weight:700;color:var(--t1)}
+.badge{font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:20px;
+  text-transform:uppercase;letter-spacing:1px;flex-shrink:0;margin-left:10px}
+.badge.critical{background:var(--redb);color:var(--red);border:1px solid var(--redB)}
+.badge.high{background:var(--orab);color:var(--ora);border:1px solid rgba(255,107,53,.3)}
+.badge.medium{background:var(--yelb);color:var(--yel);border:1px solid rgba(245,197,24,.3)}
+.badge.low{background:var(--grnb);color:var(--grn);border:1px solid rgba(34,229,116,.3)}
+.vc-desc{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:8px}
+.vc-det{display:none;background:var(--bg3);border-radius:var(--r);padding:14px;margin-top:10px}
+.vc.open .vc-det{display:block}
+.det-row{display:flex;gap:10px;margin-bottom:7px;font-size:12px}
+.det-lbl{font-family:var(--mono);color:var(--ac);width:110px;flex-shrink:0;font-size:11px}
+.det-val{color:var(--t2);line-height:1.6}
+.evidence-box{background:#020508;border-radius:var(--r);padding:10px 12px;
+  font-family:var(--mono);font-size:11px;color:var(--ac2);margin-top:6px;
+  word-break:break-all}
+/* Header table */
+.htbl{width:100%;border-collapse:collapse;font-size:12px}
+.htbl th{font-family:var(--mono);font-size:10px;color:var(--t2);letter-spacing:1px;
+  text-transform:uppercase;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border)}
+.htbl td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--t2);vertical-align:top}
+.htbl tr:hover td{background:var(--bg3)}
+.htbl tr:last-child td{border-bottom:none}
+.hdr-name-cell{font-family:var(--mono);color:var(--t1);font-size:11px}
+.spill{font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:20px;
+  display:inline-block;white-space:nowrap}
+.spill.present{background:var(--grnb);color:var(--grn);border:1px solid rgba(34,229,116,.3)}
+.spill.missing{background:var(--redb);color:var(--red);border:1px solid var(--redB)}
+.spill.weak{background:var(--yelb);color:var(--yel);border:1px solid rgba(245,197,24,.3)}
+/* SSL grid */
+.ssl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+.ssl-it{background:var(--bgc2);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.ssl-lbl{font-family:var(--mono);font-size:10px;color:var(--t3);
+  letter-spacing:1.5px;text-transform:uppercase;margin-bottom:7px}
+.ssl-val{font-size:14px;font-weight:500;color:var(--t1)}
+/* Tech tags */
+.tech-wrap{display:flex;flex-wrap:wrap;gap:10px}
+.tech-tag{display:flex;align-items:center;gap:10px;background:var(--bgc2);
+  border:1px solid var(--border);border-radius:var(--r);padding:10px 14px}
+.tech-dot{width:9px;height:9px;border-radius:50%}
+.tech-nm{color:var(--t1);font-weight:500;font-size:13px}
+.tech-ct{font-size:11px;color:var(--t3);font-family:var(--mono)}
+/* Compliance */
+.comp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.comp-card{background:var(--bgc2);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.comp-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.comp-nm{font-family:var(--head);font-size:15px;font-weight:700;color:var(--t1)}
+.comp-sc{font-family:var(--mono);font-size:18px;font-weight:700}
+.cbar-bg{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-bottom:10px}
+.cbar-f{height:100%;border-radius:2px}
+/* Rec cards */
+.rec-cards{display:flex;flex-direction:column;gap:12px}
+.rec-card{background:var(--bgc2);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.rec-hdr{display:flex;align-items:flex-start;gap:12px;margin-bottom:9px}
+.rec-num{font-family:var(--mono);font-size:10px;color:var(--ac);
+  background:var(--acg);border:1px solid var(--borderB);border-radius:4px;
+  padding:2px 8px;flex-shrink:0}
+.rec-t{font-family:var(--head);font-size:15px;font-weight:700;color:var(--t1)}
+.rec-body{font-size:13px;color:var(--t2);line-height:1.7}
+.rec-code{background:#020508;border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 14px;font-family:var(--mono);font-size:11px;color:var(--ac2);
+  margin-top:10px;overflow-x:auto;white-space:pre;line-height:1.6}
+.owtag{font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:20px;
+  background:var(--blub);color:var(--blu);border:1px solid rgba(61,157,245,.3);
+  display:inline-block;margin-top:8px}
+/* Cookie table */
+.ck-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.ck-tbl th{font-family:var(--mono);font-size:10px;color:var(--t2);letter-spacing:1px;
+  text-transform:uppercase;padding:8px 12px;border-bottom:1px solid var(--border);text-align:left}
+.ck-tbl td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--t2);vertical-align:top}
+.ck-tbl tr:hover td{background:var(--bg3)}
+/* History */
+.hist-grid{display:flex;flex-direction:column;gap:10px}
+.hist-item{background:var(--bgc2);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.hist-item:hover{border-color:var(--borderB)}
+.hist-url{font-family:var(--mono);font-size:12px;color:var(--t1)}
+.hist-ts{font-size:11px;color:var(--t3)}
+.hist-right{display:flex;align-items:center;gap:12px}
+/* Scrollbar */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:var(--bg0)}
+::-webkit-scrollbar-thumb{background:var(--borderB);border-radius:3px}
+/* Responsive */
+@media(max-width:768px){
+  .fg{grid-template-columns:1fr}
+  .score-row{grid-template-columns:1fr}
+  .cnt-grid{grid-template-columns:1fr 1fr}
+  .charts-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<!-- MODAL -->
+<div class="modal-ov" id="modalOv">
+  <div class="modal">
+    <div class="modal-lock">🛡️</div>
+    <h2>AHVF</h2>
+    <div class="modal-sub">Autonomous Hybrid VAPT Framework v1.0 — Python + Flask + Playwright Backend</div>
+    <div class="warn-box">⚠️ <strong>Legal Notice:</strong> Unauthorized testing is illegal under computer fraud and cybercrime laws. This tool must only be used on systems you own or are explicitly authorized to test.</div>
+    <div class="check-list">
+      <div class="chk-item"><div class="chk-dot"></div><span>Stateful web crawling and endpoint discovery</span></div>
+      <div class="chk-item"><div class="chk-dot"></div><span>Schema condensation and grouping</span></div>
+      <div class="chk-item"><div class="chk-dot"></div><span>AI-orchestrated payload generation</span></div>
+      <div class="chk-item"><div class="chk-dot"></div><span>Asynchronous anomaly detection via fuzzy execution</span></div>
+      <div class="chk-item"><div class="chk-dot"></div><span>LLM-powered triage and false-positive filtering</span></div>
+    </div>
+    <div class="agree-block">
+      <input type="checkbox" id="ckAgree" onchange="document.getElementById('btnProceed').disabled=!this.checked">
+      <label for="ckAgree">I confirm I am the owner or authorized security assessor of the target application. I accept full legal responsibility for this assessment.</label>
+    </div>
+    <button class="btn-go" id="btnProceed" disabled onclick="openTool()">ENTER ASSESSMENT TOOL</button>
+  </div>
+</div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo"><div class="logo-icon">⬡</div>AHVF</div>
+  <div class="topbar-right">
+    <span style="font-family:var(--mono);font-size:11px;color:var(--t3)" id="dbStats">Ready</span>
+    <div class="status-pill" id="statusPill"><div class="status-dot"></div><span id="statusTxt">READY</span></div>
+    <button class="btn-sec" onclick="showHistory()">History</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+<!-- SCAN FORM -->
+<div id="scanForm">
+  <div class="scard">
+    <div class="scard-title">Crawler Configuration</div>
+    <div class="fg">
+      <div class="fgrp full">
+        <label>Target Base URL *</label>
+        <input type="url" id="fUrl" placeholder="http://example.com/" autocomplete="off">
+      </div>
+      <div class="fgrp">
+        <label>Login URL (Optional)</label>
+        <input type="url" id="fLoginUrl" placeholder="http://example.com/login" autocomplete="off">
+      </div>
+      <div class="fgrp">
+        <label>Username Selector</label>
+        <input type="text" id="fUserSel" placeholder="input[name='username']" value="input[name='username']">
+      </div>
+      <div class="fgrp">
+        <label>Password Selector</label>
+        <input type="text" id="fPassSel" placeholder="input[name='password']" value="input[name='password']">
+      </div>
+      <div class="fgrp">
+        <label>Submit Selector</label>
+        <input type="text" id="fSubmitSel" placeholder="button[type='submit']" value="button[type='submit']">
+      </div>
+      <div class="fgrp">
+        <label>Ollama Model</label>
+        <input type="text" id="fOllama" placeholder="gemma4:31b-cloud" value="gemma4:31b-cloud" autocomplete="off">
+      </div>
+      <div class="fgrp">
+        <label>Pipeline Phase</label>
+        <select id="fPhase" style="width:100%; padding:8px; background:var(--bgc); border:1px solid var(--border); color:var(--t1); border-radius:var(--r); font-family:var(--mono);">
+          <option value="all">Full Pipeline (Crawl + Analyze)</option>
+          <option value="skip_crawl">Skip Crawl (Analyze existing data)</option>
+          <option value="crawl">Crawl Only</option>
+        </select>
+      </div>
+      <div class="fgrp full">
+        <label>Role Credentials <button type="button" onclick="addCredRow()" style="background:transparent; border:1px solid var(--border); color:var(--ac); cursor:pointer; font-size:11px; padding:2px 6px; border-radius:4px; margin-left:10px;">+ Add Role</button></label>
+        <div id="credContainer" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+          <div class="cred-row" style="display:flex; gap:8px;">
+            <input type="text" placeholder="Role (e.g. Admin)" class="cred-role" style="flex:1;">
+            <input type="text" placeholder="Username" class="cred-user" style="flex:1;">
+            <input type="password" placeholder="Password" class="cred-pass" style="flex:1;">
+            <button type="button" onclick="this.parentElement.remove()" style="background:var(--redb); border:1px solid var(--red); color:var(--red); padding:0 10px; cursor:pointer; border-radius:var(--r);">×</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="scanrow">
+      <button class="btn-scan" onclick="startScan()">⬡ INITIATE PIPELINE</button>
+      <button type="button" class="btn-sec" onclick="fillDemo()">Demo URL</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--t3);margin-top:14px">
+      ℹ️ Make sure Ollama is running before initiating the pipeline.
+    </div>
+  </div>
+
+  <script>
+    function showHistory() {
+      alert("Scan history is not stored persistently in this version. Results are written to the local 'results/' folder and the database is cleared upon starting a new pipeline.");
+    }
+
+    function fillDemo() {
+      document.getElementById('fUrl').value = 'http://127.0.0.1:5000/';
+      document.getElementById('fLoginUrl').value = 'http://127.0.0.1:5000/';
+      document.getElementById('fUserSel').value = 'input[name=\\'username\\']';
+      document.getElementById('fPassSel').value = 'input[name=\\'password\\']';
+      
+      const credContainer = document.getElementById('credContainer');
+      credContainer.innerHTML = `
+        <div class="cred-row" style="display:flex; gap:8px;">
+          <input type="text" placeholder="Role (e.g. Admin)" class="cred-role" style="flex:1;" value="Admin">
+          <input type="text" placeholder="Username" class="cred-user" style="flex:1;" value="admin@csii.in">
+          <input type="password" placeholder="Password" class="cred-pass" style="flex:1;" value="admin123">
+          <button type="button" onclick="this.parentElement.remove()" style="background:var(--redb); border:1px solid var(--red); color:var(--red); padding:0 10px; cursor:pointer; border-radius:var(--r);">×</button>
+        </div>`;
+    }
+
+    function addCredRow() {
+      const row = document.createElement('div');
+      row.className = 'cred-row';
+      row.style.cssText = 'display:flex; gap:8px;';
+      row.innerHTML = `
+        <input type="text" placeholder="Role (e.g. User)" class="cred-role" style="flex:1;">
+        <input type="text" placeholder="Username" class="cred-user" style="flex:1;">
+        <input type="password" placeholder="Password" class="cred-pass" style="flex:1;">
+        <button type="button" onclick="this.parentElement.remove()" style="background:var(--redb); border:1px solid var(--red); color:var(--red); padding:0 10px; cursor:pointer; border-radius:var(--r);">×</button>
+      `;
+      document.getElementById('credContainer').appendChild(row);
+    }
+  </script>
+
+  <!-- Scan History -->
+  <div class="scard" id="histCard" style="display:none">
+    <div class="scard-title">Scan History</div>
+    <div class="hist-grid" id="histGrid"></div>
+  </div>
+</div>
+
+<!-- PROGRESS -->
+<div id="progressSec">
+  <div class="prog-card">
+    <div class="prog-hdr">
+      <div class="prog-title" id="progTitle">Initializing scan…</div>
+      <div class="prog-pct" id="progPct">0%</div>
+    </div>
+    <div class="pbar-bg"><div class="pbar-fill" id="pbar"></div></div>
+    <div id="logConsole" class="log-console"></div>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div id="resultsSec">
+  <div class="sec-title">Security Assessment Results</div>
+
+  <div class="rpt-row" id="rptRow"></div>
+
+  <div class="score-row">
+    <div class="score-card">
+      <div class="score-lbl">Security Score</div>
+      <div class="score-num" id="scoreNum">—</div>
+      <div class="score-grade" id="scoreGrade">—</div>
+    </div>
+    <div class="sum-stats">
+      <div class="cnt-grid">
+        <div class="cnt-box crit"><div class="cnt-num" id="nCrit">0</div><div class="cnt-lbl">Critical</div></div>
+        <div class="cnt-box high"><div class="cnt-num" id="nHigh">0</div><div class="cnt-lbl">High</div></div>
+        <div class="cnt-box med"> <div class="cnt-num" id="nMed">0</div> <div class="cnt-lbl">Medium</div></div>
+        <div class="cnt-box low"> <div class="cnt-num" id="nLow">0</div> <div class="cnt-lbl">Low</div></div>
+      </div>
+      <div class="meta-info">
+        <div>Target: <span id="mUrl">—</span></div>
+        <div>Completed: <span id="mTime">—</span></div>
+        <div>Server: <span id="mServer">—</span></div>
+        <div>SSL Grade: <span id="mSSL">—</span></div>
+        <div>Duration: <span id="mDur">—</span></div>
+        <div>Scan ID: <span id="mScanId">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="charts-row">
+    <div class="chart-card"><div class="chart-title">Finding Distribution</div><div class="ch-wrap"><canvas id="cDonut"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Category Risk Radar</div><div class="ch-wrap"><canvas id="cRadar"></canvas></div></div>
+  </div>
+
+  <div class="tabs" id="tabsRow"></div>
+  <div id="tpFindings" class="tp active"></div>
+  <div id="tpHeaders"  class="tp"></div>
+  <div id="tpSSL"      class="tp"></div>
+  <div id="tpTech"     class="tp"></div>
+  <div id="tpCookies"  class="tp"></div>
+  <div id="tpOWASP"    class="tp"></div>
+  <div id="tpCrawler"  class="tp"></div>
+  <div id="tpCompliance" class="tp"></div>
+  <div id="tpRecs"     class="tp"></div>
+  <div id="tpLogs"     class="tp"></div>
+
+  <div style="text-align:center;margin-top:24px">
+    <button class="btn-sec" onclick="resetScan()">↻ New Scan</button>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+const API = '';  // same origin
+let currentScanId = null;
+let charts = {};
+let pollTimer = null;
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+window.onload = () => { loadStats(); };
+
+async function loadStats() {
+  try {
+    const r = await fetch(`${API}/api/stats`);
+    const d = await r.json();
+    document.getElementById('dbStats').textContent =
+      `DB: ${d.total_scans} scans | ${d.total_findings} findings`;
+  } catch(e) {
+    document.getElementById('dbStats').textContent = 'Backend offline';
+  }
+}
+
+function openTool() {
+  document.getElementById('modalOv').style.display = 'none';
+  document.getElementById('scanForm').style.display = 'block';
+  loadHistory();
+}
+
+// ─── History ──────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const r = await fetch(`${API}/api/scans`);
+    const d = await r.json();
+    const grid = document.getElementById('histGrid');
+    const card = document.getElementById('histCard');
+    if (!d.scans || d.scans.length === 0) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    grid.innerHTML = d.scans.slice(0,8).map(s => {
+      const gradeColor = s.grade==='A+'||s.grade==='A' ? 'var(--grn)' : s.grade==='B'||s.grade==='C' ? 'var(--yel)' : 'var(--red)';
+      return `<div class="hist-item" onclick="loadResult('${s.scan_id}')">
+        <div>
+          <div class="hist-url">${s.target_url}</div>
+          <div class="hist-ts">${(s.started_at||'').slice(0,16)} · ${s.status.toUpperCase()} · Score: ${s.score}</div>
+        </div>
+        <div class="hist-right">
+          <span style="font-family:var(--mono);font-size:18px;font-weight:700;color:${gradeColor}">${s.grade}</span>
+          <button class="btn-sec" style="font-size:11px;padding:5px 10px" onclick="event.stopPropagation();deleteScan('${s.scan_id}')">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function deleteScan(scanId) {
+  if (!confirm('Delete this scan record?')) return;
+  await fetch(`${API}/api/scan/delete/${scanId}`, {method:'DELETE'});
+  loadHistory(); loadStats();
+}
+
+// ─── Start Scan ───────────────────────────────────────────────────────────────
+async function startScan() {
+  const target_url  = document.getElementById('fUrl').value.trim();
+  const login_url = document.getElementById('fLoginUrl').value.trim();
+  const username_selector = document.getElementById('fUserSel').value.trim();
+  const password_selector = document.getElementById('fPassSel').value.trim();
+  const submit_selector = document.getElementById('fSubmitSel').value.trim();
+  const ollama_model = document.getElementById('fOllama').value.trim();
+  const phase = document.getElementById('fPhase').value;
+  
+  const credentials = [];
+  const rows = document.querySelectorAll('.cred-row');
+  rows.forEach(row => {
+      let roleName = row.querySelector('.cred-role').value.trim() || 'Guest';
+      let uName = row.querySelector('.cred-user').value.trim();
+      let pWord = row.querySelector('.cred-pass').value.trim();
+      if (uName || pWord || roleName !== 'Guest') {
+          credentials.push({ role: roleName, username: uName, password: pWord });
+      }
+  });
+
+  if (!target_url) { alert('Please enter a target URL.'); return; }
+  if (!target_url.startsWith('http://') && !target_url.startsWith('https://')) {
+    alert('URL must start with http:// or https://'); return;
+  }
+
+  if(credentials.length === 0) {
+      credentials.push({ role: "Guest", username: "", password: "" });
+  }
+
+  setStatus('SCANNING', true);
+  document.getElementById('scanForm').style.display = 'none';
+  document.getElementById('progressSec').style.display = 'block';
+  document.getElementById('resultsSec').style.display = 'none';
+  document.getElementById('logConsole').innerHTML = '';
+  document.getElementById('pbar').style.width = '0%';
+  document.getElementById('progPct').textContent = '0%';
+
+  addLog('info', 'engine', `AHVF Pipeline starting → ${target_url}`);
+  addLog('info', 'engine', 'Connecting to backend…');
+
+  try {
+    const res = await fetch(`${API}/api/scan/start`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ 
+          target_url, 
+          login_url, 
+          username_selector, 
+          password_selector, 
+          submit_selector,
+          ollama_model,
+          phase,
+          credentials 
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) { throw new Error(data.error || 'Start failed'); }
+
+    currentScanId = data.scan_id;
+    addLog('ok', 'engine', `Scan ID: ${data.scan_id} — Backend received request`);
+    pollProgress(data.scan_id);
+
+  } catch(e) {
+    addLog('error', 'engine', `Error: ${e.message}`);
+    setStatus('ERROR', false);
+    alert(`Scan failed: ${e.message}\n\nMake sure the Python backend is running:\n  python ui/app.py`);
+    document.getElementById('progressSec').style.display = 'none';
+    document.getElementById('scanForm').style.display = 'block';
+  }
+}
+
+function pollProgress(scanId) {
+  let lastLogCount = 0;
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`${API}/api/scan/status/${scanId}`);
+      const data = await res.json();
+
+      // Update progress
+      const pct = Math.round(data.progress || 0);
+      document.getElementById('pbar').style.width = pct + '%';
+      document.getElementById('progPct').textContent = pct + '%';
+      if (data.current_module) {
+        document.getElementById('progTitle').textContent = data.current_module + '…';
+      }
+
+      // Append new log lines
+      if (data.logs && data.logs.length > lastLogCount) {
+        const c = document.getElementById('logConsole');
+        let newHtml = '';
+        for(let i=lastLogCount; i<data.logs.length; i++){
+          const lg = data.logs[i];
+          newHtml += `<div class="log-line"><span class="time">[${new Date().toLocaleTimeString()}]</span> <span class="mod">[${(lg.module||'sys').toUpperCase()}]</span> <span class="msg ${lg.level||'info'}">${lg.msg}</span></div>`;
+        }
+        c.insertAdjacentHTML('beforeend', newHtml);
+        c.scrollTop = c.scrollHeight;
+        lastLogCount = data.logs.length;
+      }
+      
+      if (data.status === 'complete') {
+        clearInterval(pollTimer);
+        document.getElementById('pbar').style.width = '100%';
+        document.getElementById('progPct').textContent = '100%';
+        document.getElementById('progTitle').textContent = 'Scan complete!';
+        addLog('ok', 'engine', '═══ SCAN COMPLETE — Loading results…');
+        setTimeout(() => loadResult(scanId), 800);
+      } else if (data.status === 'error') {
+        clearInterval(pollTimer);
+        addLog('error', 'engine', 'Scan encountered an error');
+        setStatus('ERROR', false);
+      }
+    } catch(e) {
+      addLog('warn', 'engine', `Polling error — retrying… (${e.message})`);
+    }
+  }, 1000);
+}
+
+// ─── Load Results ─────────────────────────────────────────────────────────────
+async function loadResult(scanId) {
+  try {
+    const res = await fetch(`${API}/api/scan/results/${scanId}`);
+    if (!res.ok) { throw new Error('Results not ready'); }
+    const data = await res.json();
+    currentScanId = scanId;
+    renderResults(data);
+    document.getElementById('progressSec').style.display = 'none';
+    document.getElementById('scanForm').style.display = 'none';
+    document.getElementById('resultsSec').style.display = 'block';
+    setStatus('COMPLETE', false);
+    loadStats();
+  } catch(e) {
+    addLog('error', 'engine', `Failed to load results: ${e.message}`);
+  }
+}
+
+// ─── Render Results ───────────────────────────────────────────────────────────
+function renderResults(data) {
+  const scan     = data.scan || {};
+  const findings = data.findings || [];
+  const headers  = data.http_headers || [];
+  const ssl      = data.ssl || {};
+  const tech     = data.technology || [];
+  const cookies  = data.cookies || [];
+  const logs     = data.logs || [];
+  const crawler  = data.crawler || {};
+  const summary  = data.summary || {};
+
+  // Score
+  const score = summary.score || 0;
+  const grade = summary.grade || 'F';
+  const gc = grade==='A+'||grade==='A' ? 'var(--grn)' : grade==='B' ? '#2ed573' : grade==='C' ? 'var(--yel)' : grade==='D' ? 'var(--ora)' : 'var(--red)';
+  document.getElementById('scoreNum').textContent = score;
+  document.getElementById('scoreNum').style.color = gc;
+  document.getElementById('scoreGrade').textContent = 'Grade ' + grade;
+  document.getElementById('scoreGrade').style.background = gc + '22';
+  document.getElementById('scoreGrade').style.color = gc;
+
+  const c = summary.counts || {};
+  document.getElementById('nCrit').textContent = c.critical || 0;
+  document.getElementById('nHigh').textContent = c.high || 0;
+  document.getElementById('nMed').textContent  = c.medium || 0;
+  document.getElementById('nLow').textContent  = c.low || 0;
+
+  document.getElementById('mUrl').textContent    = scan.target_url || '—';
+  document.getElementById('mTime').textContent   = (scan.completed_at||'—').slice(0,19);
+  document.getElementById('mServer').textContent = ssl.tls_version ? (ssl.tls_version + ' | ' + (ssl.cert_issuer||'?').slice(0,30)) : '—';
+  document.getElementById('mSSL').textContent    = ssl.grade || '—';
+  document.getElementById('mDur').textContent    = (scan.duration_sec||0).toFixed(1) + 's';
+  document.getElementById('mScanId').textContent = scan.scan_id || '—';
+
+  // Report buttons
+  document.getElementById('rptRow').innerHTML = `
+    <a class="btn-rpt" href="${API}/api/report/pdf/${scan.scan_id}" target="_blank">📄 PDF Report</a>
+    <a class="btn-rpt" href="${API}/api/report/excel/${scan.scan_id}" target="_blank">📊 Excel Report</a>
+    <a class="btn-rpt" href="${API}/api/report/json/${scan.scan_id}" target="_blank">{ } JSON Export</a>
+  `;
+
+  // Charts
+  renderCharts(c, findings);
+
+  // Tabs
+  buildTabs();
+
+  // Panels
+  renderFindings(findings);
+  renderHeaders(headers);
+  renderSSL(ssl);
+  renderTech(tech);
+  renderCookies(cookies);
+  renderOWASP(findings.filter(f => f.category === 'OWASP Top 10'));
+  renderCrawler(crawler);
+  renderCompliance(score);
+  renderRecs(findings);
+  renderLogs(logs);
+}
+
+function renderCharts(c, findings) {
+  if (charts.donut) charts.donut.destroy();
+  if (charts.radar) charts.radar.destroy();
+
+  const donutCtx = document.getElementById('cDonut').getContext('2d');
+  const totalCounts = (c.critical||0) + (c.high||0) + (c.medium||0) + (c.low||0);
+  charts.donut = new Chart(donutCtx, {
+    type: 'doughnut',
+    data: {
+      labels: totalCounts === 0 ? ['No Findings'] : ['Critical','High','Medium','Low'],
+      datasets: [{
+        data: totalCounts === 0 ? [1] : [c.critical||0, c.high||0, c.medium||0, c.low||0],
+        backgroundColor: totalCounts === 0 ? ['rgba(255,255,255,.05)'] : ['rgba(240,56,74,.7)','rgba(255,107,53,.7)','rgba(245,197,24,.7)','rgba(34,229,116,.7)'],
+        borderColor: totalCounts === 0 ? ['transparent'] : ['#f0384a','#ff6b35','#f5c518','#22e574'],
+        borderWidth: 1.5
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{color:'#7aa898',font:{family:'Space Mono',size:10}}}},
+      cutout:'65%'
+    }
+  });
+
+  // Build category scores from findings
+  const catScores = {};
+  const catCounts = {};
+  findings.forEach(f => {
+    const cat = f.category||'Other';
+    const wt = {critical:20,high:10,medium:5,low:1}[f.severity]||1;
+    catScores[cat] = (catScores[cat]||0) + wt;
+    catCounts[cat] = (catCounts[cat]||0) + 1;
+  });
+  const cats = ['HTTP Headers','SSL/TLS','Authentication','OWASP Top 10','Technology','Information Disclosure'];
+  const scores = cats.map(c => Math.min(100, catScores[c]||0));
+
+  const radarCtx = document.getElementById('cRadar').getContext('2d');
+  charts.radar = new Chart(radarCtx, {
+    type: 'radar',
+    data: {
+      labels: cats.map(c => c.length > 12 ? c.slice(0,12)+'…' : c),
+      datasets: [{
+        label: 'Risk Score',
+        data: scores,
+        backgroundColor: 'rgba(240,56,74,.15)',
+        borderColor: 'rgba(240,56,74,.7)',
+        pointBackgroundColor: '#f0384a',
+        borderWidth: 1.5
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      scales:{r:{min:0, max:100, grid:{color:'rgba(0,212,170,.08)'},angleLines:{color:'rgba(0,212,170,.1)'},
+        ticks:{display:false},pointLabels:{color:'#7aa898',font:{family:'Space Mono',size:9}}}},
+      plugins:{legend:{display:false}}
+    }
+  });
+}
+
+function buildTabs() {
+  const defs = [
+    ['tpFindings','All Findings'],['tpHeaders','HTTP Headers'],['tpSSL','SSL/TLS'],
+    ['tpTech','Technology'],['tpCookies','Cookies'],['tpOWASP','OWASP Top 10'],
+    ['tpCrawler','Crawler'],['tpCompliance','Compliance'],['tpRecs','Recommendations'],['tpLogs','Scan Logs'],
+  ];
+  const row = document.getElementById('tabsRow');
+  row.innerHTML = '';
+  defs.forEach(([id,lbl],i) => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (i===0?' active':'');
+    b.textContent = lbl;
+    b.onclick = () => {
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      document.querySelectorAll('.tp').forEach(p=>p.classList.remove('active'));
+      b.classList.add('active');
+      document.getElementById(id).classList.add('active');
+    };
+    row.appendChild(b);
+  });
+}
+
+function renderFindings(findings) {
+  const sorted = [...findings].sort((a,b)=>{const o={critical:0,high:1,medium:2,low:3};return o[a.severity]-o[b.severity];});
+  document.getElementById('tpFindings').innerHTML = sorted.length === 0
+    ? '<div style="color:var(--t3);font-family:var(--mono);font-size:13px;padding:20px">No findings recorded.</div>'
+    : `<div class="vcards">${sorted.map(f => vcardHtml(f)).join('')}</div>`;
+}
+
+function vcardHtml(f) {
+  const sev = f.severity||'low';
+  return `<div class="vc ${sev}" onclick="this.classList.toggle('open')">
+    <div class="vc-hdr">
+      <div class="vc-name">${f.name||''}</div>
+      <span class="badge ${sev}">${sev.toUpperCase()}</span>
+    </div>
+    <div class="vc-desc">${f.description||''}</div>
+    <div class="vc-det">
+      ${f.evidence ? `<div class="det-row"><span class="det-lbl">EVIDENCE</span><div class="det-val"><div class="evidence-box">${f.evidence}</div></div></div>` : ''}
+      ${f.impact ? `<div class="det-row"><span class="det-lbl">IMPACT</span><div class="det-val">${f.impact}</div></div>` : ''}
+      ${f.remediation ? `<div class="det-row"><span class="det-lbl">REMEDIATION</span><div class="det-val">${f.remediation}</div></div>` : ''}
+      ${f.owasp_ref ? `<div class="det-row"><span class="det-lbl">OWASP</span><div class="det-val">${f.owasp_ref}</div></div>` : ''}
+      <div class="det-row">
+        <span class="det-lbl">CVSS / CWE</span>
+        <div class="det-val">${f.cvss_score||0} | ${f.cwe_id||'—'}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderHeaders(headers) {
+  if (!headers.length) { document.getElementById('tpHeaders').innerHTML='<div style="color:var(--t3);padding:20px;font-family:var(--mono);font-size:13px">No header data.</div>'; return; }
+  const rows = headers.map(h => {
+    const st = (h.status||'').toLowerCase();
+    return `<tr>
+      <td><span class="hdr-name-cell">${h.header_name||''}</span></td>
+      <td><span class="spill ${st}">${st.toUpperCase()}</span></td>
+      <td style="font-family:var(--mono);font-size:11px;max-width:220px;word-break:break-all">${h.header_value||'— not present —'}</td>
+      <td><span class="spill ${st==='present'?'present':st==='missing'?'missing':'weak'}">${(h.risk_level||'').toUpperCase()||'—'}</span></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tpHeaders').innerHTML = `
+    <div class="scard" style="padding:0;overflow:hidden">
+      <table class="htbl">
+        <thead><tr><th>Header</th><th>Status</th><th>Value</th><th>Risk</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderSSL(ssl) {
+  if (!ssl || !Object.keys(ssl).length) { document.getElementById('tpSSL').innerHTML='<div style="color:var(--t3);padding:20px;font-family:var(--mono);font-size:13px">No SSL data.</div>'; return; }
+  const items = [
+    ['HTTPS Enabled', ssl.https_enabled ? '✓ Yes' : '✗ No', ssl.https_enabled?'var(--grn)':'var(--red)'],
+    ['SSL Grade',     ssl.grade||'—', ssl.grade==='A+'||ssl.grade==='A'?'var(--grn)':ssl.grade==='B'?'var(--yel)':'var(--red)'],
+    ['TLS Version',   ssl.tls_version||'—', 'var(--t1)'],
+    ['Cert Issuer',   (ssl.cert_issuer||'—').slice(0,40), 'var(--t1)'],
+    ['Cert Subject',  ssl.cert_subject||'—', 'var(--t1)'],
+    ['Cert Expiry',   ssl.cert_expiry||'—', 'var(--t1)'],
+    ['Cert Valid',    ssl.cert_valid ? '✓ Valid' : '✗ Invalid', ssl.cert_valid?'var(--grn)':'var(--red)'],
+    ['Days to Expiry', (ssl.days_to_expiry||0) + ' days', (ssl.days_to_expiry||0)>30?'var(--grn)':(ssl.days_to_expiry||0)>7?'var(--yel)':'var(--red)'],
+    ['Key Size',      ssl.key_size||'—', 'var(--t1)'],
+    ['Weak Ciphers',  ssl.weak_ciphers||'None detected', ssl.weak_ciphers?'var(--red)':'var(--grn)'],
+    ['HSTS',          ssl.hsts_present ? '✓ Present' : '✗ Missing', ssl.hsts_present?'var(--grn)':'var(--red)'],
+    ['Mixed Content', ssl.mixed_content ? '✗ Detected' : '✓ None', ssl.mixed_content?'var(--yel)':'var(--grn)'],
+    ['OCSP Stapling', ssl.ocsp_stapling||'Unknown', 'var(--t1)'],
+  ];
+  document.getElementById('tpSSL').innerHTML = `<div class="ssl-grid">${
+    items.map(([l,v,c])=>`<div class="ssl-it"><div class="ssl-lbl">${l}</div><div class="ssl-val" style="color:${c}">${v}</div></div>`).join('')
+  }</div>`;
+}
+
+function renderTech(tech) {
+  const COLORS = ['#22e574','#3d9df5','#f5c518','#f0384a','#ff6b35','#00d4aa','#c084fc','#fb923c'];
+  if (!tech.length) { document.getElementById('tpTech').innerHTML='<div style="color:var(--t3);padding:20px;font-family:var(--mono);font-size:13px">No technology detected.</div>'; return; }
+  document.getElementById('tpTech').innerHTML = `<div class="tech-wrap">${
+    tech.map((t,i)=>`<div class="tech-tag">
+      <div class="tech-dot" style="background:${COLORS[i%COLORS.length]}"></div>
+      <div><div class="tech-nm">${t.tech_name} ${t.tech_version||''}</div><div class="tech-ct">${t.category}</div></div>
+    </div>`).join('')
+  }</div>`;
+}
+
+function renderCookies(cookies) {
+  if (!cookies.length) { document.getElementById('tpCookies').innerHTML='<div style="color:var(--t3);padding:20px;font-family:var(--mono);font-size:13px">No cookies found.</div>'; return; }
+  const rows = cookies.map(ck => {
+    let issues = ck.issues||'[]';
+    if (typeof issues === 'string') { try { issues = JSON.parse(issues); } catch(e) { issues=[]; } }
+    const ok = v => v ? '<span style="color:var(--grn)">✓</span>' : '<span style="color:var(--red)">✗</span>';
+    return `<tr>
+      <td style="font-family:var(--mono);color:var(--t1);font-size:11px">${ck.cookie_name||'?'}</td>
+      <td>${ok(ck.has_secure)}</td>
+      <td>${ok(ck.has_httponly)}</td>
+      <td style="font-family:var(--mono);font-size:11px">${ck.samesite_value||'—'}</td>
+      <td style="font-size:11px;color:${issues.length?'var(--yel)':'var(--grn)'}">${issues.length ? issues.join(' | ') : 'None'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('tpCookies').innerHTML = `
+    <div class="scard" style="padding:0;overflow:hidden">
+      <table class="ck-tbl">
+        <thead><tr><th>Cookie</th><th>Secure</th><th>HttpOnly</th><th>SameSite</th><th>Issues</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderOWASP(findings) {
+  document.getElementById('tpOWASP').innerHTML = findings.length === 0
+    ? '<div style="color:var(--t3);font-family:var(--mono);font-size:13px;padding:20px">No OWASP Top 10 indicators found.</div>'
+    : `<div class="vcards">${findings.map(f=>vcardHtml(f)).join('')}</div>`;
+}
+
+function renderCompliance(score) {
+  const items = [
+    { name:'OWASP ASVS', score: Math.min(100, score), color:'#ff6b35' },
+    { name:'PCI DSS',     score: Math.min(100, Math.round(score * 0.85)), color:'#f5c518' },
+    { name:'GDPR Tech',   score: Math.min(100, Math.round(score * 1.1)), color:'#3d9df5' },
+    { name:'CIS Benchmark', score: Math.min(100, Math.round(score * 0.75)), color:'#f0384a' },
+  ];
+  document.getElementById('tpCompliance').innerHTML = `<div class="comp-grid">${
+    items.map(i=>`<div class="comp-card">
+      <div class="comp-hdr">
+        <div class="comp-nm">${i.name}</div>
+        <div class="comp-sc" style="color:${i.color}">${i.score}%</div>
+      </div>
+      <div class="cbar-bg"><div class="cbar-f" style="width:${i.score}%;background:${i.color}"></div></div>
+    </div>`).join('')
+  }</div>`;
+}
+
+function renderRecs(findings) {
+  const RECS = {
+    'HTTP Headers': {code:"Content-Security-Policy: default-src 'self';\nStrict-Transport-Security: max-age=31536000; includeSubDomains;\nX-Frame-Options: DENY;\nX-Content-Type-Options: nosniff;", owasp:'A05:2021'},
+    'SSL/TLS': {code:"# Nginx\nssl_protocols TLSv1.2 TLSv1.3;\nssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;\nssl_prefer_server_ciphers off;", owasp:'A02:2021'},
+    'Authentication': {code:"Set-Cookie: session=TOKEN; Secure; HttpOnly; SameSite=Strict; Path=/", owasp:'A07:2021'},
+    'OWASP Top 10': {code:"# Disable directory listing\nOptions -Indexes  # Apache\nautoindex off;   # Nginx", owasp:'A05:2021'},
+  };
+  const seen = new Set();
+  const recs = [];
+  findings.forEach(f => {
+    const cat = f.category||'';
+    if (RECS[cat] && !seen.has(cat)) {
+      seen.add(cat);
+      recs.push({num:`R${String(recs.length+1).padStart(2,'0')}`, title:`Fix: ${cat}`, body:f.remediation||'', ...RECS[cat]});
+    }
+  });
+  document.getElementById('tpRecs').innerHTML = recs.length === 0
+    ? '<div style="color:var(--t3);font-family:var(--mono);font-size:13px;padding:20px">No recommendations (good job!).</div>'
+    : `<div class="rec-cards">${recs.map(r=>`<div class="rec-card">
+        <div class="rec-hdr"><span class="rec-num">${r.num}</span><div class="rec-t">${r.title}</div></div>
+        <div class="rec-body">${r.body}</div>
+        <div class="rec-code">${r.code}</div>
+        <span class="owtag">OWASP: ${r.owasp}</span>
+      </div>`).join('')}</div>`;
+}
+
+function renderLogs(logs) {
+  const div = document.getElementById('tpLogs');
+  const items = logs.map(l => {
+    const cls = l.level==='error'?'error':l.level==='warn'?'warn':l.level==='ok'?'ok':l.level==='scan'?'scan':'info';
+    return `<div class="log-line"><span class="ts">[${(l.created_at||'').slice(11,19)||l.ts||''}]</span> <span class="${cls}">[${(l.module||'system').toUpperCase()}] ${l.message||l.msg||''}</span></div>`;
+  }).join('');
+  div.innerHTML = `<div class="log-console" style="height:400px">${items}</div>`;
+  div.querySelector('.log-console').scrollTop = 9999;
+}
+
+function renderCrawler(crawler) {
+  const t = document.getElementById('tpCrawler');
+  if (!crawler || (!crawler.endpoints?.length && !crawler.spa_routes?.length && !crawler.graphql_schemas?.length && !crawler.bac_candidates?.length)) {
+    t.innerHTML = '<div style="color:var(--t3);padding:20px;font-family:var(--mono);font-size:13px">No crawler data found. (Module might be disabled or no links discovered)</div>';
+    return;
+  }
+  
+  let html = '';
+  
+  // BAC Candidates
+  if (crawler.bac_candidates?.length) {
+    html += `<div class="scard"><div class="scard-title" style="color:var(--red)">Version BAC Candidates (FR-02.6)</div>`;
+    html += crawler.bac_candidates.map(bac => `
+      <div style="background:var(--redb);border:1px solid var(--redB);padding:10px;border-radius:var(--r);margin-bottom:10px;font-size:13px">
+        <strong style="color:var(--red)">Risk: ${bac.bac_risk}</strong><br>
+        <span style="font-family:var(--mono);color:var(--t1)">${bac.endpoint_key}</span><br>
+        Present in: ${bac.present_in} | Absent in: ${bac.absent_in}<br>
+        Roles: ${bac.roles_seen?.join(', ')}
+      </div>
+    `).join('');
+    html += `</div>`;
+  }
+
+  // Endpoints Table
+  if (crawler.endpoints?.length) {
+    html += `<div class="scard"><div class="scard-title">Discovered Endpoints (${crawler.endpoints.length})</div>
+      <div style="overflow-x:auto"><table class="htbl">
+        <thead><tr><th>Method</th><th>URL</th><th>Role</th><th>Source</th><th>Status</th></tr></thead>
+        <tbody>
+          ${crawler.endpoints.map(ep => `
+            <tr>
+              <td style="color:var(--ac);font-family:var(--mono)">${ep.method}</td>
+              <td style="color:var(--t1);font-family:var(--mono);word-break:break-all">${ep.url}</td>
+              <td>${ep.role}</td>
+              <td>${ep.source}</td>
+              <td>${ep.response_status || '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table></div></div>`;
+  }
+  
+  // SPA Routes
+  if (crawler.spa_routes?.length) {
+    html += `<div class="scard"><div class="scard-title">SPA / Lazy-Loaded Routes (${crawler.spa_routes.length})</div>
+      <div style="font-family:var(--mono);font-size:12px;color:var(--t1)">
+        ${crawler.spa_routes.map(r => `<div>${r}</div>`).join('')}
+      </div></div>`;
+  }
+
+  // GraphQL
+  if (crawler.graphql_schemas?.length) {
+    html += `<div class="scard"><div class="scard-title">GraphQL Schemas (${crawler.graphql_schemas.length})</div>`;
+    html += crawler.graphql_schemas.map(gql => `
+      <div style="margin-bottom:15px;font-size:12px">
+        <div style="color:var(--ac);font-family:var(--mono);margin-bottom:5px">${gql.endpoint} (Role: ${gql.role})</div>
+        <div style="color:var(--t2)">Types: ${gql.types?.slice(0,10).join(', ')}${gql.types?.length>10?'...':''}</div>
+        <div style="color:var(--t2)">Queries: ${gql.queries?.slice(0,10).join(', ')}${gql.queries?.length>10?'...':''}</div>
+        <div style="color:var(--t2)">Mutations: ${gql.mutations?.slice(0,10).join(', ')}${gql.mutations?.length>10?'...':''}</div>
+      </div>
+    `).join('');
+    html += `</div>`;
+  }
+
+  t.innerHTML = html;
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function addLog(level, module, msg) {
+  const el = document.getElementById('logConsole');
+  if (!el) return;
+  const now = new Date().toTimeString().slice(0,8);
+  const cls = level==='error'?'error':level==='warn'?'warn':level==='ok'?'ok':level==='scan'?'scan':'info';
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `<span class="ts">[${now}]</span> <span class="${cls}">[${module.toUpperCase()}] ${msg}</span>`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(txt, scanning) {
+  document.getElementById('statusTxt').textContent = txt;
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill' + (scanning?' scanning':'');
+  const dot = pill.querySelector('.status-dot');
+  dot.style.background = txt==='COMPLETE'?'var(--grn)':txt==='ERROR'?'var(--red)':txt==='SCANNING'?'var(--yel)':'var(--ac)';
+}
+
+function resetScan() {
+  currentScanId = null;
+  if (pollTimer) clearInterval(pollTimer);
+  document.getElementById('resultsSec').style.display = 'none';
+  document.getElementById('progressSec').style.display = 'none';
+  document.getElementById('scanForm').style.display = 'block';
+  setStatus('READY', false);
+  loadHistory();
+}
+</script>
+</body>
+</html>

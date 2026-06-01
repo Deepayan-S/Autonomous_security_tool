@@ -80,6 +80,7 @@ This installs:
 - `aiohttp` — async HTTP client for fuzzing, passive analysis, JS scanning
 - `jinja2` — HTML report template rendering
 - `PyJWT` — JWT token decoding and TTL monitoring
+- `Flask` & `Flask-Cors` — Web UI backend and CORS support
 
 ### 3. Install Playwright browser
 
@@ -239,6 +240,16 @@ python triage_engine.py
 # Run crawler directly (without the pipeline wrapper)
 python Crawler.py
 ```
+
+### Option E: Web UI
+
+The framework includes a Web UI built with Flask that allows you to trigger scans and view real-time logs and results.
+
+```bash
+# Start the Web UI server
+python ui/app.py
+```
+Open your browser and navigate to `http://localhost:5000`.
 
 ---
 

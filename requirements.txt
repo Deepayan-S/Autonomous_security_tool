@@ -5,3 +5,5 @@ aiosqlite
 aiohttp
 PyJWT
 Jinja2
+Flask
+Flask-Cors

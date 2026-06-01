@@ -1,0 +1,130 @@
+
+============================================================
+AHVF � Autonomous Hybrid VAPT Framework
+Pipeline Runner v2.0
+!! For authorized security testing only !!
+============================================================
+
+[DB] Database initialized at C:\Personal\CSII\Autonomous_security_tool\ahvf_state.db
+[Pipeline] Clearing old database state for fresh run...
+[DB] All tables cleared
+
+============================================================
+PHASE 1: Stateful Crawler (M1)
+============================================================
+
+
+======================================================================
+AHVF � Module 1: Stateful Crawler
+!! For authorized security testing only !!
+======================================================================
+
+--- Target Configuration ---
+Reading configuration from crawl_config.json...
+Traceback (most recent call last):
+File "C:\Personal\CSII\Autonomous_security_tool\Crawler.py", line 1162, in <module>
+asyncio.run(main())
+~~~~~~~~~~~^^^^^^^^
+File "C:\Python314\Lib\asyncio\runners.py", line 204, in run
+return runner.run(main)
+~~~~~~~~~~^^^^^^
+File "C:\Python314\Lib\asyncio\runners.py", line 127, in run
+return self._loop.run_until_complete(task)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+File "C:\Python314\Lib\asyncio\base_events.py", line 719, in run_until_complete
+return future.result()
+~~~~~~~~~~~~~^^
+File "C:\Personal\CSII\Autonomous_security_tool\Crawler.py", line 1144, in main
+version_flags = _detect_version_bac_candidates(all_results)
+^^^^^^^^^^^
+NameError: name 'all_results' is not defined. Did you mean: 'all_role_results'?
+
+============================================================
+PHASE 1b: JavaScript Scanner
+Mode: Keyword Scan
+============================================================
+
+[Pipeline] Found 18 unique JS file(s) to scan
+2026-05-29 14:43:51,408 [INFO] Scanning 18 JavaScript files (deep_scan=False)...
+2026-05-29 14:43:52,258 [INFO] Downloaded 0 JS files successfully
+2026-05-29 14:43:52,258 [INFO] Tier 1 (Keyword): Found 0 issues across 0 files
+2026-05-29 14:43:52,258 [INFO] Total unique findings: 0
+2026-05-29 14:43:52,259 [INFO] JS scan results written to results\js_scan_results.json
+[DB] Inserted 0 passive finding(s)
+[Pipeline] JS scan complete: 0 finding(s)
+[Pipeline] Importing crawl data from results\crawl_results.json...
+[DB] Inserted 73 endpoint(s)
+[Pipeline] Imported 73 endpoint(s) into SQLite
+
+============================================================
+PHASE 2a: Schema Condenser (M2)
+============================================================
+
+[M2] Loaded 73 raw endpoint(s)
+[M2] Filtered out 47 static/non-testable endpoint(s), keeping 26
+[M2] Grouped into 26 unique schema(s) (dedup ratio: 26/26 = 1.0x)
+[M2] Dropped 19 schema(s) with no injectable parameters
+[M2] Condensation complete: 7 schema(s)
+
+--------------------------------------------------
+M2 Condensation Summary
+--------------------------------------------------
+Total unique schemas : 7
+File upload schemas  : 4
+GraphQL schemas      : 0
+With context hints   : 6
+Methods distribution :
+GET      : 4
+POST     : 3
+--------------------------------------------------
+
+[M2] Condensed schemas written to results\condensed_schemas.json
+[Pipeline] M2 complete: 7 condensed schema(s)
+
+============================================================
+PHASE 2b: AI Payload Orchestrator (M3)
+============================================================
+
+[M2] Loaded 73 raw endpoint(s)
+[M2] Filtered out 47 static/non-testable endpoint(s), keeping 26
+[M2] Grouped into 26 unique schema(s) (dedup ratio: 26/26 = 1.0x)
+[M2] Dropped 19 schema(s) with no injectable parameters
+[M2] Condensation complete: 7 schema(s)
+
+--------------------------------------------------
+M2 Condensation Summary
+--------------------------------------------------
+Total unique schemas : 7
+File upload schemas  : 4
+GraphQL schemas      : 0
+With context hints   : 6
+Methods distribution :
+GET      : 4
+POST     : 3
+--------------------------------------------------
+
+[Ollama] Client configured: host=http://localhost:11434, model=gemma4:31b-cloud
+[Ollama] Health check passed: gemma4:31b-cloud is available
+[Pipeline] Ollama connected successfully
+
+============================================================
+M3: AI Payload Orchestrator
+Schemas: 7 | Batch size: 15
+Model: gemma4:31b-cloud
+============================================================
+
+[M3] Split into 1 batch(es)
+
+[M3] Processing batch 1/1...
+[M3] LLM returned 23 payloads, 23 valid
+[DB] Inserted 23 payload(s) into cache
+[M3] Payload cache written to results\payload_cache.json
+
+============================================================
+M3: Payload Orchestrator � Summary
+============================================================
+Total payloads generated  : 23
+[Pipeline] Payload generation failed: 'charmap' codec can't encode character '\u251c' in position 4: character maps to <undefined>
+[Ollama] Session closed
+[Pipeline] AI connection severed (FR-05.7)
+[Pipeline] Payload generation failed.
