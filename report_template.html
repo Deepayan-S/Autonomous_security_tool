@@ -229,63 +229,77 @@
 
         <!-- Detailed Findings -->
         <h2>Detailed Findings</h2>
-        {% for f in report.findings %}
+        {% for vuln_class, findings in report.grouped_findings.items() %}
         <div class="card">
             <div class="finding-header">
                 <div>
-                    <h3 style="margin: 0;">
-                        <span class="method">{{ f.method }}</span> {{ f.url }}
+                    <h3 style="margin: 0; color: var(--primary);">
+                        {{ vuln_class }} ({{ findings|length }} endpoints affected)
                     </h3>
-                    <div style="margin-top: 5px; color: var(--text-muted); font-size: 0.9rem;">
-                        Target Parameter: <code>{{ f.target_param }}</code> | Vuln Class: <strong>{{ f.vuln_class }}</strong>
-                    </div>
                 </div>
+            </div>
+            
+            <details style="margin-top: 20px;">
+                <summary style="cursor: pointer; color: var(--primary); font-weight: bold; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">View Affected Endpoints</summary>
                 
-                <div style="text-align: right;">
-                    {% if f.triage_status == "Confirmed Vulnerability" %}
-                        {% set cvss = f.cvss_score|default(0)|float %}
-                        {% if cvss >= 7.0 %}
-                            <span class="badge cvss-high">CVSS {{ cvss }} (High)</span>
-                        {% elif cvss >= 4.0 %}
-                            <span class="badge cvss-med">CVSS {{ cvss }} (Medium)</span>
-                        {% else %}
-                            <span class="badge cvss-low">CVSS {{ cvss }} (Low)</span>
+                <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 20px;">
+                    {% for f in findings %}
+                    <div style="padding: 15px; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.2);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div>
+                                <strong><span class="method">{{ f.method }}</span> {{ f.url }}</strong>
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-top: 5px;">
+                                    Target Parameter: <code>{{ f.target_param }}</code>
+                                </div>
+                            </div>
+                            <div>
+                                {% if f.triage_status == "Confirmed Vulnerability" %}
+                                    {% set cvss = f.cvss_score|default(0)|float %}
+                                    {% if cvss >= 7.0 %}
+                                        <span class="badge cvss-high">CVSS {{ cvss }} (High)</span>
+                                    {% elif cvss >= 4.0 %}
+                                        <span class="badge cvss-med">CVSS {{ cvss }} (Medium)</span>
+                                    {% else %}
+                                        <span class="badge cvss-low">CVSS {{ cvss }} (Low)</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge" style="background: rgba(255,255,255,0.1); color: var(--text-muted);">{{ f.triage_status }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 10px;">
+                            <strong>Injected Payload:</strong>
+                            <pre style="margin-top: 5px; padding: 10px;">{{ f.payload }}</pre>
+                        </div>
+
+                        <div style="margin-top: 10px;">
+                            <strong>Evidence (Status {{ f.status_code }}):</strong>
+                            <pre style="margin-top: 5px; padding: 10px;">{{ f.baseline_delta }}</pre>
+                        </div>
+                        
+                        {% if f.llm_details and f.triage_status == "Confirmed Vulnerability" %}
+                        <div style="margin-top: 15px; padding: 15px; background: rgba(99, 102, 241, 0.05); border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
+                            <h4 style="margin-top: 0; color: var(--primary); font-size: 0.95rem;">🤖 LLM Analysis & Remediation</h4>
+                            
+                            {% if f.llm_details.cve_cwe_mapping %}
+                            <p style="margin: 5px 0; font-size: 0.9rem;"><strong>CWE:</strong> {{ f.llm_details.cve_cwe_mapping }}</p>
+                            {% endif %}
+                            
+                            {% if f.llm_details.cvss_justification %}
+                            <p style="margin: 5px 0; font-size: 0.9rem;"><strong>CVSS Justification:</strong> {{ f.llm_details.cvss_justification }}</p>
+                            {% endif %}
+
+                            {% if f.llm_details.remediation_snippet %}
+                            <p style="margin: 10px 0 5px 0; font-size: 0.9rem;"><strong>Recommended Fix:</strong></p>
+                            <pre style="margin-top: 0; padding: 10px;">{{ f.llm_details.remediation_snippet }}</pre>
+                            {% endif %}
+                        </div>
                         {% endif %}
-                    {% else %}
-                        <span class="badge" style="background: rgba(255,255,255,0.1); color: var(--text-muted);">{{ f.triage_status }}</span>
-                    {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
-            </div>
-
-            <div style="margin-top: 20px;">
-                <strong>Injected Payload:</strong>
-                <pre>{{ f.payload }}</pre>
-            </div>
-
-            <div style="margin-top: 20px;">
-                <strong>Evidence (Status {{ f.status_code }}):</strong>
-                <pre>{{ f.baseline_delta }}</pre>
-            </div>
-
-            {% if f.llm_details and f.triage_status == "Confirmed Vulnerability" %}
-            <div style="margin-top: 20px; padding: 20px; background: rgba(99, 102, 241, 0.05); border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
-                <h4 style="margin-top: 0; color: var(--primary);">🤖 LLM Analysis & Remediation</h4>
-                
-                {% if f.llm_details.cve_cwe_mapping %}
-                <p><strong>CWE:</strong> {{ f.llm_details.cve_cwe_mapping }}</p>
-                {% endif %}
-                
-                {% if f.llm_details.cvss_justification %}
-                <p><strong>CVSS Justification:</strong> {{ f.llm_details.cvss_justification }}</p>
-                {% endif %}
-
-                {% if f.llm_details.remediation_snippet %}
-                <p><strong>Recommended Fix:</strong></p>
-                <pre>{{ f.llm_details.remediation_snippet }}</pre>
-                {% endif %}
-            </div>
-            {% endif %}
-
+            </details>
         </div>
         {% endfor %}
         

@@ -17,8 +17,8 @@ RESULTS_DIR.mkdir(exist_ok=True)
 class TriageEngine:
     """Module 5: LLM-powered anomaly classification and reporting."""
     
-    SYSTEM_PROMPT = """You are a Senior Application Security Engineer. Your task is to triage anomalous responses detected during fuzzing.
-You will be provided with a JSON array of anomalies. Each anomaly contains the payload, endpoint context, and baseline deltas.
+    SYSTEM_PROMPT = """You are a Senior Application Security Engineer performing authorized penetration testing triage. You will receive a JSON array of anomalies detected during fuzzing. Each anomaly contains the payload, endpoint context, and baseline deltas.
+
 Your job is to classify each anomaly and return a JSON array containing EXACTLY one object per input anomaly, in the exact same order.
 
 For each anomaly, your output object MUST have:
@@ -30,12 +30,25 @@ For each anomaly, your output object MUST have:
 6. "cvss_justification": A brief explanation of the CVSS score, else "".
 7. "remediation_snippet": A secure coding snippet or advice to fix the issue, else "".
 
-CRITICAL TRIAGE RULES (MUST FOLLOW — DO NOT OVERRIDE):
-- The baseline_delta field contains HEURISTIC EVIDENCE from our detection engine. Treat it as ground truth.
-- If baseline_delta contains "Injection payload reflected in response" -> MUST be "Confirmed Vulnerability" or "Requires Manual Review". NEVER "Likely False Positive".
-- If baseline_delta contains "Server Error (Status: 500)" from an injection payload -> MUST be "Confirmed Vulnerability" or "Requires Manual Review". NEVER "Likely False Positive".
-- If baseline_delta contains "Access control bypass" -> MUST be "Confirmed Vulnerability" (CWE-284).
-- Only classify as "Likely False Positive" when baseline_delta is empty OR contains ONLY "Response body differs from baseline" with no other indicators.
+EVIDENCE-BASED TRIAGE RULES (MUST FOLLOW):
+
+CONFIRMED VULNERABILITY — classify as "Confirmed Vulnerability" ONLY when:
+- baseline_delta contains "Injection payload reflected in response" AND the vuln_class is XSS/SECOND_ORDER_XSS → CWE-79
+- baseline_delta contains SQL error keywords (e.g., "syntax error", "mysql", "ORA-", "UNION", "SQLite") → CWE-89
+- baseline_delta shows template evaluation output (e.g., "49" for {{7*7}}) → CWE-1336 (SSTI)
+- baseline_delta contains "Access control bypass" → CWE-284
+- baseline_delta contains OS output (e.g., "uid=", "root:", "[extensions]") from command injection/path traversal → CWE-78 or CWE-22
+- The response body contains data belonging to another user (IDOR evidence) → CWE-639
+
+LIKELY FALSE POSITIVE — classify as "Likely False Positive" when:
+- baseline_delta contains ONLY "Server Error (Status: 500)" with NO other evidence. A 500 error on malformed input is typically just an unhandled exception, NOT proof of exploitation. Most web applications will return 500 when receiving unexpected input formats, SQL injection strings, or special characters in parameters — this is poor error handling, not a vulnerability.
+- baseline_delta is empty or contains ONLY "Response body differs from baseline" with no meaningful indicators.
+- The response simply shows a generic error page or JSON error message.
+
+REQUIRES MANUAL REVIEW — classify as "Requires Manual Review" when:
+- There is partial evidence but not enough to confirm (e.g., 500 error WITH a SQL-like payload AND suspicious response content).
+- The anomaly shows a timing difference that could indicate blind injection.
+- The response contains unusual data that might indicate information disclosure.
 
 Output MUST be a valid JSON array."""
 
@@ -272,9 +285,18 @@ Output MUST be a valid JSON array."""
             # Table may not exist in older DBs
             pass
 
+        # Group findings by vuln_class for the report
+        grouped_findings = {}
+        for f in findings:
+            vclass = f.get("vuln_class", "UNKNOWN")
+            if vclass not in grouped_findings:
+                grouped_findings[vclass] = []
+            grouped_findings[vclass].append(f)
+
         report_data = {
             "summary": stats,
             "findings": findings,
+            "grouped_findings": grouped_findings,
             "coverage": coverage,
             "passive_findings": passive_findings,
         }
@@ -285,8 +307,12 @@ Output MUST be a valid JSON array."""
             json.dump(report_data, f, indent=2)
             
         # Render HTML
+        from jinja2 import select_autoescape
         env = FileSystemLoader(searchpath="./")
-        jinja_env = Environment(loader=env)
+        jinja_env = Environment(
+            loader=env,
+            autoescape=select_autoescape(['html', 'xml'])
+        )
         try:
             template = jinja_env.get_template("report_template.html")
             html_out = template.render(report=report_data)

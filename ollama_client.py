@@ -223,6 +223,10 @@ class OllamaClient:
                     json=payload,
                     timeout=self.timeout,
                 )
+                
+                if not resp.ok:
+                    print(f"[Ollama] HTTP {resp.status_code} Error. Response body: {resp.text}")
+                    
                 resp.raise_for_status()
                 data = resp.json()
 
@@ -301,6 +305,10 @@ class OllamaClient:
                     json=payload,
                     timeout=self.timeout,
                 )
+                
+                if not resp.ok:
+                    print(f"[Ollama] HTTP {resp.status_code} Error. Response body: {resp.text}")
+                    
                 resp.raise_for_status()
                 data = resp.json()
 

@@ -49,6 +49,42 @@ PATH_BYPASS_PATTERNS = [
     ("dot-segment", lambda path: path.replace("/", "/./")),
 ]
 
+# Common public endpoints that should NOT be flagged as BAC.
+# These are pages/routes accessible to all roles by design.
+COMMON_PUBLIC_PATHS = {
+    "home", "login", "logout", "signin", "signup", "register",
+    "dashboard", "about", "contact", "index", "main",
+    "forgot-password", "reset-password", "change-password",
+    "terms", "privacy", "help", "faq", "error", "404", "500",
+    "health", "ping", "status", "favicon.ico",
+}
+
+
+def _is_common_public_endpoint(url: str) -> bool:
+    """Check if a URL path ends with a common public route segment."""
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.rstrip("/").lower()
+    # Check the last segment of the path
+    last_segment = path.split("/")[-1] if path else ""
+    if last_segment in COMMON_PUBLIC_PATHS:
+        return True
+    # Also check the full path against common patterns
+    for common in COMMON_PUBLIC_PATHS:
+        if path.endswith(f"/{common}") or path.endswith(f"/{common}/"):
+            return True
+    return False
+
+
+def _normalize_endpoint_key(ep: dict) -> tuple:
+    """Normalize an endpoint to (path, method) for comparison across roles.
+    
+    Uses the URL path (without query params) to match endpoints.
+    This prevents false mismatches when the same API was crawled
+    with different query parameters for different roles.
+    """
+    parsed = urllib.parse.urlparse(ep["url"])
+    return (parsed.path.rstrip("/").lower(), ep["method"].upper())
+
 # Privilege hierarchy (higher index = more privileged)
 DEFAULT_PRIVILEGE_ORDER = [
     "guest", "unauthenticated", "public",
@@ -236,13 +272,19 @@ class BACComparator:
 
         for i, low_role in enumerate(roles_sorted[:-1]):
             for high_role in roles_sorted[i + 1:]:
-                low_urls = {(ep["url"], ep["method"]) for ep in role_endpoints.get(low_role, [])}
+                # Normalize low-privilege endpoints by (path, method)
+                low_keys = {
+                    _normalize_endpoint_key(ep)
+                    for ep in role_endpoints.get(low_role, [])
+                }
                 high_eps = role_endpoints.get(high_role, [])
 
-                # Find endpoints exclusive to the higher-privilege role
+                # Find API endpoints exclusive to the higher-privilege role,
+                # excluding common public pages (home, login, dashboard, etc.)
                 admin_only = [
                     ep for ep in high_eps
-                    if (ep["url"], ep["method"]) not in low_urls
+                    if _normalize_endpoint_key(ep) not in low_keys
+                    and not _is_common_public_endpoint(ep["url"])
                 ]
 
                 if not admin_only:

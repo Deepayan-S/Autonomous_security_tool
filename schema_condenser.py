@@ -675,6 +675,22 @@ class SchemaCondenser:
                 if schema.form_fields:
                     entry["form_fields"] = schema.form_fields
 
+                # Extract numeric or UUID path segments for IDOR testing
+                import re
+                path_ids = {}
+                path_str = schema.path
+                if path_str.startswith('/'):
+                    path_parts = path_str[1:].split('/')
+                else:
+                    path_parts = path_str.split('/')
+                
+                for idx, seg in enumerate(path_parts):
+                    if seg and (seg.isdigit() or re.match(r'^[0-9a-fA-F]{8}-', seg)):
+                        path_ids[f"path_seg_{idx}"] = seg
+                        
+                if path_ids:
+                    entry["path_ids"] = path_ids
+
                 formatted.append(entry)
 
             batches.append(json.dumps(formatted, indent=2, ensure_ascii=False))

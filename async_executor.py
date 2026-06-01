@@ -68,31 +68,43 @@ class TokenManager:
 
 class AdaptiveRateLimiter:
     """Handles 429s and connection resets with exponential backoff + jitter (FR-06.4)"""
-    def __init__(self, initial_backoff=1.0, max_backoff=60.0):
+    def __init__(self, initial_backoff=1.0, max_backoff=60.0, max_retries=3):
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
+        self.max_retries = max_retries
         self.global_pause = asyncio.Event()
         self.global_pause.set()  # Set means "allowed to proceed"
 
     async def request(self, session: aiohttp.ClientSession, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
         backoff = self.initial_backoff
+        retries = 0
         while True:
             await self.global_pause.wait()
             try:
                 resp = await session.request(method, url, **kwargs)
-                if resp.status == 429:
+                if resp.status == 429:  
+                    if retries >= self.max_retries:
+                        logger.error(f"Max retries ({self.max_retries}) reached for 429 Too Many Requests on {url}.")
+                        return resp  # Return the 429 response to be handled by the executor
+                        
                     logger.warning(f"429 Too Many Requests from {url}. Backing off for {backoff:.2f}s")
                     await self._trigger_backoff(backoff)
                     backoff = min(backoff * 2, self.max_backoff)
+                    retries += 1
                     # Don't return resp here, we need to retry
                     # Need to read and discard the body to release the connection
                     await resp.read()
                     continue
                 return resp
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                if retries >= self.max_retries:
+                    logger.error(f"Max retries ({self.max_retries}) reached for connection error on {url}. Giving up.")
+                    raise  # Re-raise the exception so it gets caught by execute_task's try-except block
+                    
                 logger.warning(f"Connection error ({e}) to {url}. Backing off for {backoff:.2f}s")
                 await self._trigger_backoff(backoff)
                 backoff = min(backoff * 2, self.max_backoff)
+                retries += 1
 
     async def _trigger_backoff(self, duration: float):
         self.global_pause.clear()
@@ -115,26 +127,28 @@ class BaselineDeltaChecker:
         is_anomaly = False
         has_baseline = baseline_status is not None and baseline_hash is not None
         
-        # 1. Server Error (always flag regardless of baseline)
-        if resp_status >= 500:
-            delta["status"] = f"Server Error (Status: {resp_status})"
-            is_anomaly = True
-            
-        # 2. Expected Indicator match
+        # 1. Expected Indicator match (STRONGEST SIGNAL)
         if expected_indicator:
             if expected_indicator.isdigit() and str(resp_status) == expected_indicator:
-                delta["indicator"] = f"Matched expected status code: {expected_indicator}"
-                is_anomaly = True
-            elif not expected_indicator.isdigit() and expected_indicator in resp_body:
-                delta["indicator"] = f"Expected string found in response body"
+                # If we expect 200, make sure the response isn't just an empty success or soft error
+                if resp_status == 200:
+                    body_lower = resp_body.lower()
+                    if len(resp_body.strip()) <= 15 or "error" in body_lower or "not found" in body_lower or "invalid" in body_lower or "unauthorized" in body_lower:
+                        pass # False positive 200 OK
+                    else:
+                        delta["indicator"] = f"Matched expected status code: {expected_indicator}"
+                        is_anomaly = True
+                else:
+                    delta["indicator"] = f"Matched expected status code: {expected_indicator}"
+                    is_anomaly = True
+            elif not expected_indicator.isdigit() and expected_indicator.lower() in resp_body.lower():
+                delta["indicator"] = f"Expected string '{expected_indicator}' found in response body"
                 is_anomaly = True
                 
-        # 3. Payload Reflection (XSS/SQLi — flag if special chars reflected)
-        #    Case-insensitive + URL-decoded matching to catch app transformations
-        if payload:
+        # 2. Payload Reflection (XSS/SQLi — flag if special chars reflected)
+        if not is_anomaly and payload:
             payload_lower = payload.lower()
             body_lower = resp_body.lower()
-            # Also check URL-decoded form for encoded reflections
             try:
                 import urllib.parse
                 decoded_body = urllib.parse.unquote(resp_body).lower()
@@ -143,27 +157,23 @@ class BaselineDeltaChecker:
 
             if payload_lower in body_lower or payload_lower in decoded_body:
                 if any(c in payload for c in ["<", ">", "'", "\"", "(", ")"]):
-                    delta["reflection"] = "Injection payload reflected in response"
-                    is_anomaly = True
+                    # Don't flag empty bodies or generic errors
+                    if resp_status == 200 and len(resp_body) > 20: 
+                        delta["reflection"] = "Injection payload reflected in response"
+                        is_anomaly = True
 
-        # 4. Baseline comparison (ONLY if we have valid baseline data)
-        if has_baseline:
-            curr_hash = BaselineDeltaChecker.get_body_hash(resp_body)
-            
-            # Status code changed in a suspicious way
-            if baseline_status != resp_status:
-                # Auth bypass: baseline was 401/403 but payload got 200
-                if baseline_status in (401, 403) and resp_status == 200:
-                    delta["auth_bypass"] = f"Access control bypass ({baseline_status} -> {resp_status})"
-                    is_anomaly = True
-                elif resp_status < 500:
-                    delta["status"] = f"Unexpected Status ({baseline_status} -> {resp_status})"
-            
-            # Response body changed (potential data leak / IDOR / injection effect)
-            if curr_hash != baseline_hash and resp_status < 400:
-                delta["hash"] = "Response body differs from baseline (possible data manipulation)"
-                is_anomaly = True
-            
+        # 3. Auth Bypass Check (BAC/IDOR)
+        if not is_anomaly and has_baseline:
+            # Baseline was restricted, but payload got a 200 OK
+            if baseline_status in (401, 403, 404) and resp_status == 200:
+                body_lower = resp_body.lower()
+                # To prevent false positives on empty bodies, ensure it has some real content
+                if len(resp_body.strip()) > 15 and "error" not in body_lower and "invalid" not in body_lower and "unauthorized" not in body_lower:
+                    # Also ensure the body isn't identical to the baseline if baseline was soft error
+                    if BaselineDeltaChecker.get_body_hash(resp_body) != baseline_hash:
+                        delta["auth_bypass"] = f"Access control bypass ({baseline_status} -> {resp_status})"
+                        is_anomaly = True
+
         return {
             "is_anomaly": is_anomaly,
             "delta_summary": json.dumps(delta) if delta else ""
