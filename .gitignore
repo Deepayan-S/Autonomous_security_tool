@@ -31,3 +31,10 @@ Thumbs.db
 
 # ─── Crawl results (generated at runtime) ───
 results/
+
+# SQLite database
+ahvf_state.db
+
+# SQLite WAL/SHM files
+ahvf_state.db-wal
+ahvf_state.db-shm

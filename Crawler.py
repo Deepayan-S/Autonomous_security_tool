@@ -66,11 +66,6 @@ EXCLUDED_PATHS = [
     "/static/",
     "/assets/",
     "/favicon",
-    "/login",
-    "/signin",
-    "/sign-in",
-    "/authenticate",
-    "/auth/token",
 ]
 
 MAX_PAGES_PER_ROLE = 500     # Safety cap — prevent infinite crawl
@@ -1034,7 +1029,9 @@ async def crawl_role(
     if username:
         login_ok = await _login(page, username, password)
         if not login_ok:
-            print(f"  [!] WARNING: Login failed for role '{role}', but continuing crawl anyway (could be an SPA or nonstandard login).")
+            print(f"  [!] Skipping role '{role}' — login failed.")
+            await browser.close()
+            return result
 
         # Refresh cookies after login
         raw_cookies = await context.cookies()

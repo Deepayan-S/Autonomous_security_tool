@@ -148,7 +148,6 @@ def run_generate(db: AHVFDatabase) -> bool:
         use_fallback_only = True
 
     # Step 3: Generate payloads
-    success = True
     try:
         if use_fallback_only:
             # Fallback-only mode — create orchestrator without client
@@ -171,18 +170,16 @@ def run_generate(db: AHVFDatabase) -> bool:
         else:
             orchestrator = PayloadOrchestrator(client, db)
             payloads = orchestrator.generate_payloads(schemas)
-            if not payloads:
-                success = False
     except Exception as e:
         print(f"[Pipeline] Payload generation failed: {e}")
-        success = False
+        return False
     finally:
         # FR-05.7: Sever AI connection after cache population
         if client:
             client.close()
             print("[Pipeline] AI connection severed (FR-05.7)")
 
-    return success
+    return True
 
 def run_executor() -> bool:
     print(f"\n{'='*60}")

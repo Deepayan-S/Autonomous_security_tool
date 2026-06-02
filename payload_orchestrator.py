@@ -243,22 +243,20 @@ REQUIRED_PAYLOAD_KEYS = {"payload", "target_param", "vuln_class", "expected_indi
 def _validate_payload(payload_dict: dict) -> bool:
     """
     Validate a single payload dict against the expected schema (FR-05.6).
-    Gracefully handles missing expected keys.
-    Returns True if valid (salvageable), False otherwise.
+
+    Returns True if valid, False otherwise.
     """
-    # Payload is absolutely required
-    if not payload_dict.get("payload"):
+    # Check required keys exist
+    if not all(key in payload_dict for key in REQUIRED_PAYLOAD_KEYS):
         return False
 
-    # Provide defaults for missing keys
-    if "target_param" not in payload_dict or not payload_dict["target_param"]:
-        payload_dict["target_param"] = "unknown"
-        
-    if "vuln_class" not in payload_dict or not payload_dict["vuln_class"]:
-        payload_dict["vuln_class"] = "UNKNOWN"
-        
-    if "expected_indicator" not in payload_dict:
-        payload_dict["expected_indicator"] = ""
+    # Check values are non-empty strings
+    if not payload_dict.get("payload"):
+        return False
+    if not payload_dict.get("target_param"):
+        return False
+    if not payload_dict.get("vuln_class"):
+        return False
 
     # Vuln class should be one of the known types (lenient — accept unknown too)
     # Just log a warning for unknown types, don't reject
