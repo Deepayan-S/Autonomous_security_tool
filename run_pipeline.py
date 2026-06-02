@@ -422,7 +422,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
                 _import_crawl_to_db(db)
 
             ok = run_condense(db)
-            if not ok and phase == "condense":
+            if not ok:
                 print("[Pipeline] Condensation failed.")
                 return
             if phase == "condense":
@@ -431,7 +431,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         # ── Phase 2b: Generate Payloads ──────────────────────────
         if phase in ("all", "generate"):
             ok = run_generate(db)
-            if not ok and phase == "generate":
+            if not ok:
                 print("[Pipeline] Payload generation failed.")
                 return
             if phase == "generate":
@@ -458,7 +458,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         # ── Phase 3: Execute Fuzzing ──────────────────────────────
         if phase in ("all", "execute"):
             ok = run_executor()
-            if not ok and phase == "execute":
+            if not ok:
                 print("[Pipeline] Executor failed.")
                 return
             if phase == "execute":

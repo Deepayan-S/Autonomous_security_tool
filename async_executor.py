@@ -122,17 +122,26 @@ class BaselineDeltaChecker:
         return hashlib.sha256(body.encode('utf-8')).hexdigest()
 
     @staticmethod
-    def is_anomalous(baseline_status, baseline_hash, resp_status: int, resp_body: str, payload: str, expected_indicator: str) -> dict:
+    def is_anomalous(
+        baseline_status,
+        baseline_hash,
+        resp_status: int,
+        resp_body: str,
+        payload: str,
+        expected_indicator: str,
+        vuln_class: str = "",
+    ) -> dict:
         delta = {}
         is_anomaly = False
         has_baseline = baseline_status is not None and baseline_hash is not None
+        vuln_class = (vuln_class or "").upper()
+        body_lower = (resp_body or "").lower()
         
         # 1. Expected Indicator match (STRONGEST SIGNAL)
         if expected_indicator:
             if expected_indicator.isdigit() and str(resp_status) == expected_indicator:
                 # If we expect 200, make sure the response isn't just an empty success or soft error
                 if resp_status == 200:
-                    body_lower = resp_body.lower()
                     if len(resp_body.strip()) <= 15 or "error" in body_lower or "not found" in body_lower or "invalid" in body_lower or "unauthorized" in body_lower:
                         pass # False positive 200 OK
                     else:
@@ -144,6 +153,27 @@ class BaselineDeltaChecker:
             elif not expected_indicator.isdigit() and expected_indicator.lower() in resp_body.lower():
                 delta["indicator"] = f"Expected string '{expected_indicator}' found in response body"
                 is_anomaly = True
+
+        # 1b. Class-specific proof markers. These catch real evidence even when
+        # the LLM/fallback expected_indicator was too narrow.
+        sql_markers = [
+            "sql syntax", "syntax error", "sqlstate", "mysql", "mariadb",
+            "postgresql", "sqlite", "ora-", "odbc", "jdbc", "unterminated quoted",
+            "you have an error in your sql",
+        ]
+        if vuln_class in ("SQLI", "SECOND_ORDER_SQLI", "POLYGLOT") and any(m in body_lower for m in sql_markers):
+            delta["sql_error"] = "Database error indicator found in response"
+            is_anomaly = True
+
+        traversal_markers = ["root:x:", "[extensions]", "[fonts]", "boot loader", "daemon:x:"]
+        if vuln_class == "PATH_TRAVERSAL" and any(m in body_lower for m in traversal_markers):
+            delta["path_traversal"] = "File content marker found in response"
+            is_anomaly = True
+
+        command_markers = ["uid=", "gid=", " groups=", "www-data", "nt authority", "volume serial number"]
+        if vuln_class == "COMMAND_INJECTION" and any(m in body_lower for m in command_markers):
+            delta["command_output"] = "Command output marker found in response"
+            is_anomaly = True
                 
         # 2. Payload Reflection (XSS/SQLi — flag if special chars reflected)
         if not is_anomaly and payload:
@@ -166,7 +196,6 @@ class BaselineDeltaChecker:
         if not is_anomaly and has_baseline:
             # Baseline was restricted, but payload got a 200 OK
             if baseline_status in (401, 403, 404) and resp_status == 200:
-                body_lower = resp_body.lower()
                 # To prevent false positives on empty bodies, ensure it has some real content
                 if len(resp_body.strip()) > 15 and "error" not in body_lower and "invalid" not in body_lower and "unauthorized" not in body_lower:
                     # Also ensure the body isn't identical to the baseline if baseline was soft error
@@ -197,7 +226,7 @@ class AsyncPayloadExecutor:
                 SELECT 
                     e.id as endpoint_id, e.url, e.method, e.role, e.headers, e.body as base_body, 
                     e.baseline_hash, e.baseline_status, e.jwt, e.cookies, e.form_structure,
-                    p.id as payload_id, p.payload, p.target_param, p.expected_indicator
+                    p.id as payload_id, p.payload, p.target_param, p.expected_indicator, p.vuln_class
                 FROM payload_cache p
                 JOIN endpoints e ON p.schema_hash = e.schema_hash
             """)
@@ -299,6 +328,7 @@ class AsyncPayloadExecutor:
                     url=task["url"],
                     headers=headers,
                     cookies=cookies,
+                    allow_redirects=False,
                     **request_kwargs
                 )
                 raw_body = await resp.read()
@@ -433,6 +463,7 @@ class AsyncPayloadExecutor:
                     url=task["url"], 
                     headers=headers,
                     cookies=cookies,
+                    allow_redirects=False,
                     **inject_kwargs
                 )
                 
@@ -446,7 +477,8 @@ class AsyncPayloadExecutor:
                     resp.status, 
                     resp_body,
                     task["payload"],
-                    task.get("expected_indicator", "")
+                    task.get("expected_indicator", ""),
+                    task.get("vuln_class", ""),
                 )
                 
                 if checker_result["is_anomaly"]:

@@ -42,7 +42,7 @@ from typing import Optional
 # ─────────────────────────────────────────────
 
 DEFAULT_HOST    = "http://localhost:11434"
-DEFAULT_MODEL   = "kaelri/qwen3.5-abliterated-nonthinking:2b"
+DEFAULT_MODEL   = "valkyriesys/eudaimonia-dryad3-vision"
 DEFAULT_TIMEOUT = 300  # seconds — local models can be slow on first load
 
 

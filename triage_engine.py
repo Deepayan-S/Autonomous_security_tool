@@ -161,15 +161,27 @@ Output MUST be a valid JSON array."""
                 }
 
         # SQLi reflection
-        if "reflected in response" in delta.lower() and vuln_class == "SQLI":
+        sql_evidence = ("sql_error" in delta.lower() or "database error" in delta.lower())
+        if sql_evidence and vuln_class in ("SQLI", "SECOND_ORDER_SQLI", "POLYGLOT"):
             return {
                 "anomaly_id": a_id,
                 "classification": "Confirmed Vulnerability",
-                "confidence_score": 0.90,
+                "confidence_score": 0.92,
                 "cve_cwe_mapping": "CWE-89",
-                "cvss_score": 8.6,
-                "cvss_justification": "SQL injection payload reflected — likely unsanitized query parameter",
-                "remediation_snippet": "Use parameterized queries / prepared statements. Never concatenate user input into SQL.",
+                "cvss_score": 8.1,
+                "cvss_justification": "SQL injection payload triggered database error evidence in the response",
+                "remediation_snippet": "Use parameterized queries / prepared statements and avoid concatenating user input into SQL.",
+            }
+
+        if "reflected in response" in delta.lower() and vuln_class == "SQLI":
+            return {
+                "anomaly_id": a_id,
+                "classification": "Requires Manual Review",
+                "confidence_score": 0.55,
+                "cve_cwe_mapping": "",
+                "cvss_score": 0.0,
+                "cvss_justification": "SQL payload was reflected, but reflection alone does not prove SQL execution.",
+                "remediation_snippet": "Review request handling and confirm whether the reflected value reaches a SQL sink.",
             }
 
         # Auth bypass — 401/403 -> 200
@@ -186,7 +198,7 @@ Output MUST be a valid JSON array."""
 
         # Removed: Server error triggered by injection payload block
         # Path traversal with indicator match
-        if vuln_class == "PATH_TRAVERSAL" and "expected string found" in delta.lower():
+        if vuln_class == "PATH_TRAVERSAL" and ("expected string found" in delta.lower() or "path_traversal" in delta.lower()):
             return {
                 "anomaly_id": a_id,
                 "classification": "Confirmed Vulnerability",

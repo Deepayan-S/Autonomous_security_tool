@@ -197,6 +197,45 @@ def _detect_api_version(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def _origin_from_target() -> str:
+    parsed = urllib.parse.urlparse(TARGET_BASE_URL)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _infer_api_bases(records: Optional[list[EndpointRecord]] = None) -> list[str]:
+    """Infer API roots from the target app path and already observed XHR URLs."""
+    candidates: list[str] = []
+    origin = _origin_from_target()
+    if origin:
+        candidates.append(origin)
+
+    target_path = urllib.parse.urlparse(TARGET_BASE_URL).path.strip("/")
+    if target_path:
+        app_root = target_path.split("/")[0]
+        if app_root and not app_root.endswith("-api"):
+            candidates.append(f"{origin}/{app_root}-api")
+
+    for rec in records or []:
+        parsed = urllib.parse.urlparse(rec.url)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        parts = [p for p in parsed.path.split("/") if p]
+        for idx, part in enumerate(parts):
+            if "api" in part.lower():
+                prefix = "/".join(parts[: idx + 1])
+                candidates.append(f"{parsed.scheme}://{parsed.netloc}/{prefix}")
+                break
+
+    deduped: list[str] = []
+    seen = set()
+    for item in candidates:
+        clean = item.rstrip("/")
+        if clean and clean not in seen:
+            seen.add(clean)
+            deduped.append(clean)
+    return deduped
+
+
 def _format_endpoint_txt(ep: EndpointRecord, idx: int) -> str:
     lines = [
         f"  [{idx}] {ep.method:6s} {ep.url}",
@@ -402,12 +441,14 @@ async def _openapi_probe(page: Page, role: str, url: str) -> Optional[list[Endpo
     except Exception:
         return None
 
-async def _probe_sitemap_and_robots(page: Page, role: str) -> list[EndpointRecord]:
+async def _probe_sitemap_and_robots(page: Page, role: str, ignored_urls: Optional[set] = None) -> list[EndpointRecord]:
     endpoints = []
     # Robots.txt
     try:
         clean_base = urllib.parse.urlunparse(urllib.parse.urlparse(TARGET_BASE_URL)._replace(fragment=""))
         robots_url = urllib.parse.urljoin(clean_base, "/robots.txt")
+        if ignored_urls is not None:
+            ignored_urls.add(robots_url)
         result = await page.evaluate(f"""
         async () => {{
             const controller = new AbortController();
@@ -594,10 +635,14 @@ def _make_request_handler(
     current_jwt: list,  # mutable 1-element list used as a reference
     js_files: list = None,       # mutable list to collect JS file URLs
     js_seen: set = None,         # dedup set for JS files
+    ignored_urls: set = None,    # crawler-owned probes that should not become endpoints
 ):
     async def on_request(request: Request):
         url = request.url
         method = request.method
+
+        if ignored_urls and url in ignored_urls:
+            return
 
         is_api = request.resource_type in ("fetch", "xhr")
         if not _in_scope(url, is_api=is_api) or _is_excluded(url):
@@ -692,17 +737,67 @@ def _make_response_handler(records: list[EndpointRecord], role: str):
 
     return on_response
 
-async def _extract_js_endpoints(page: Page, role: str, js_files: list) -> list[EndpointRecord]:
+def _looks_like_endpoint_literal(value: str) -> bool:
+    if not value or len(value) > 300:
+        return False
+    if any(ch.isspace() for ch in value):
+        return False
+    lowered = value.lower()
+    if lowered.startswith(("data:", "blob:", "javascript:", "mailto:", "tel:")):
+        return False
+    if any(token in value for token in ("{", "}", "[", "]", "<", ">")):
+        return False
+    if not ("/" in value or "api" in lowered or "graphql" in lowered):
+        return False
+    static_exts = (".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+                   ".ico", ".woff", ".woff2", ".ttf", ".webp")
+    return not lowered.split("?", 1)[0].endswith(static_exts)
+
+
+def _build_endpoint_url(literal: str, api_bases: list[str]) -> list[str]:
+    origin = _origin_from_target()
+    literal = literal.strip()
+    candidates: list[str] = []
+
+    if literal.startswith(("http://", "https://")):
+        candidates.append(literal)
+    elif literal.startswith("/"):
+        candidates.append(urllib.parse.urljoin(origin + "/", literal.lstrip("/")))
+    else:
+        if "api" in literal.lower():
+            candidates.append(urllib.parse.urljoin(origin + "/", literal))
+        for base in api_bases:
+            if base != origin:
+                candidates.append(urllib.parse.urljoin(base.rstrip("/") + "/", literal))
+
+    deduped: list[str] = []
+    seen = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            seen.add(candidate)
+            deduped.append(candidate)
+    return deduped
+
+
+def _infer_method_from_js_context(text: str, start: int) -> str:
+    window = text[max(0, start - 120): start + 120].lower()
+    for method in ("post", "put", "patch", "delete", "get"):
+        if f"axios.{method}" in window or f"method:'{method}'" in window or f'method:"{method}"' in window:
+            return method.upper()
+    return "GET"
+
+
+async def _extract_js_endpoints(page: Page, role: str, js_files: list, api_bases: Optional[list[str]] = None) -> list[EndpointRecord]:
     """Extract API endpoints from JS bundles using regex (FR-02.3)."""
     endpoints = []
     seen = set()
+    api_bases = api_bases or _infer_api_bases()
     patterns = [
         r"fetch\(['\"]([^'\"]+)['\"]",
         r"axios\.(?:get|post|put|delete|patch|head|options)\(['\"]([^'\"]+)['\"]",
-        r"(?:url|endpoint|api)\s*[:=]\s*['\"]([^'\"]+)['\"]",
+        r"(?:url|endpoint|api|path)\s*[:=]\s*['\"]([^'\"]+)['\"]",
         r"\.ajax\(\{\s*url\s*:\s*['\"]([^'\"]+)['\"]",
-        r"['\"](/api/[^'\"]+)['\"]",
-        r"['\"](v\d+/[^'\"]+)['\"]"
+        r"['\"]([^'\"]*(?:/api/|api/|graphql|hrms-lite-api)[^'\"]*)['\"]",
     ]
     
     for url in js_files:
@@ -714,19 +809,22 @@ async def _extract_js_endpoints(page: Page, role: str, js_files: list) -> list[E
             for p in patterns:
                 for match in re.finditer(p, text, re.IGNORECASE):
                     ep = match.group(1)
-                    if ep.startswith("/") or ep.startswith("http"):
-                        full_url = urllib.parse.urljoin(TARGET_BASE_URL, ep)
-                        if _in_scope(full_url) and not _is_excluded(full_url):
-                            fp = _fingerprint(full_url, "GET")
-                            if fp not in seen:
-                                seen.add(fp)
-                                endpoints.append(EndpointRecord(
-                                    url=full_url,
-                                    method="GET",
-                                    role=role,
-                                    source="js_bundle",
-                                    schema_hash=fp,
-                                ))
+                    if not _looks_like_endpoint_literal(ep):
+                        continue
+                    method = _infer_method_from_js_context(text, match.start())
+                    for full_url in _build_endpoint_url(ep, api_bases):
+                        if _in_scope(full_url, is_api=True) and not _is_excluded(full_url):
+                            fp = _fingerprint(full_url, method)
+                            if fp in seen:
+                                continue
+                            seen.add(fp)
+                            endpoints.append(EndpointRecord(
+                                url=full_url,
+                                method=method,
+                                role=role,
+                                source="js_bundle",
+                                schema_hash=fp,
+                            ))
         except Exception as e:
             print(f"    [JS Extract] Failed to extract from {url}: {e}")
             pass
@@ -766,6 +864,57 @@ async def _scroll_to_bottom(page: Page):
         await asyncio.sleep(0.5)
     except Exception:
         pass
+
+
+async def _collect_route_candidates(page: Page) -> list[str]:
+    """Collect existing SPA/router links, including framework-specific attrs."""
+    try:
+        return await page.evaluate("""
+        () => {
+            const out = new Set();
+            const add = (value) => {
+                if (!value || typeof value !== 'string') return;
+                const trimmed = value.trim();
+                if (!trimmed || trimmed === '#' || trimmed.startsWith('javascript:')) return;
+                try {
+                    out.add(new URL(trimmed, location.href).href);
+                } catch (e) {
+                    if (trimmed.startsWith('/')) out.add(location.origin + trimmed);
+                    if (trimmed.startsWith('#')) {
+                        const base = location.href.split('#')[0];
+                        out.add(base + trimmed);
+                    }
+                }
+            };
+
+            for (const el of document.querySelectorAll('a[href], [routerlink], [ng-reflect-router-link], [to], [data-href], [data-url]')) {
+                add(el.getAttribute('href'));
+                add(el.getAttribute('routerlink'));
+                add(el.getAttribute('ng-reflect-router-link'));
+                add(el.getAttribute('to'));
+                add(el.getAttribute('data-href'));
+                add(el.getAttribute('data-url'));
+            }
+
+            return Array.from(out);
+        }
+        """)
+    except Exception:
+        return []
+
+
+def _enqueue_routes(routes: list[str], queue: list[tuple[str, int]], visited_urls: set, depth: int, result: CrawlResult):
+    queued = {u for u, _ in queue}
+    for route in routes:
+        if not route:
+            continue
+        abs_route = urllib.parse.urljoin(TARGET_BASE_URL, route)
+        if _in_scope(abs_route) and not _is_excluded(abs_route) and abs_route not in visited_urls:
+            if abs_route not in result.spa_routes:
+                result.spa_routes.append(abs_route)
+            if abs_route not in queued:
+                queue.append((abs_route, depth + 1))
+                queued.add(abs_route)
 
 
 # ─────────────────────────────────────────────
@@ -870,9 +1019,10 @@ async def crawl_role(
 
     # Sets for JS file deduplication
     js_seen: set = set()
+    discovery_probe_urls: set = set()
 
     # Attach network interceptors
-    page.on("request",  _make_request_handler(role, seen_hashes, result.endpoints, current_cookies, current_jwt, result.js_files, js_seen))
+    page.on("request",  _make_request_handler(role, seen_hashes, result.endpoints, current_cookies, current_jwt, result.js_files, js_seen, discovery_probe_urls))
     page.on("response", _make_response_handler(result.endpoints, role))
 
     # ── Step 1: Login (Only if username is provided) ─────────────────
@@ -895,7 +1045,7 @@ async def crawl_role(
 
         print("=========================\n")
         current_cookies.clear()
-        current_cookies.extend([{"name": c["name"], "value": c["value"], "domain": c["domain"]} for c in raw_cookies])
+        current_cookies.extend([dict(c) for c in raw_cookies])
 
         # Extract JWT from cookies post-login
         for c in current_cookies:
@@ -940,13 +1090,14 @@ async def crawl_role(
         # Collect SPA routes captured by MutationObserver (FR-02.4)
         try:
             spa_routes = await page.evaluate(COLLECT_SPA_ROUTES_JS)
-            for r in spa_routes:
-                if _in_scope(r) and r not in visited_urls:
-                    result.spa_routes.append(r)
-                    if r not in [u for u, _ in queue]:
-                        queue.append((r, depth + 1))
+            _enqueue_routes(spa_routes, queue, visited_urls, depth, result)
         except Exception:
             pass
+
+        # Collect framework router links that existed before the mutation
+        # observer was installed or never materialize as plain anchors.
+        existing_routes = await _collect_route_candidates(page)
+        _enqueue_routes(existing_routes, queue, visited_urls, depth, result)
 
         # Collect standard <a href> links
         try:
@@ -970,41 +1121,51 @@ async def crawl_role(
         await _interact_with_ui(page, deep_scan)
         await _scroll_to_bottom(page)
 
+        # Interaction often reveals lazy routes and fires API calls. Re-scan the
+        # route surface after those events so the BFS queue can actually grow.
+        try:
+            spa_routes = await page.evaluate(COLLECT_SPA_ROUTES_JS)
+            _enqueue_routes(spa_routes, queue, visited_urls, depth, result)
+        except Exception:
+            pass
+        existing_routes = await _collect_route_candidates(page)
+        _enqueue_routes(existing_routes, queue, visited_urls, depth, result)
+
         # Wait briefly for any AJAX triggered by form discovery
         await asyncio.sleep(0.5)
 
-    # Strip fragment for API probes
-    api_base = urllib.parse.urlunparse(urllib.parse.urlparse(TARGET_BASE_URL)._replace(fragment=""))
-    if api_base.endswith('/'):
-        api_base = api_base[:-1]
-
     # ── Step 3: GraphQL introspection (FR-02.5) ────────────────────
-    for gql_path in GRAPHQL_PATHS:
-        gql_url = f"{api_base}{gql_path}"
-        print(f"  [GraphQL] Probing {gql_url}…")
-        gql_schema = await _graphql_introspect(page, role, gql_url)
-        if gql_schema:
-            result.graphql_schemas.append(gql_schema)
-            print(f"    [+] GraphQL schema found: {len(gql_schema.types)} types, "
-                  f"{len(gql_schema.queries)} queries, {len(gql_schema.mutations)} mutations")
+    api_bases = _infer_api_bases(result.endpoints)
+    for api_base in api_bases:
+        for gql_path in GRAPHQL_PATHS:
+            gql_url = f"{api_base}{gql_path}"
+            print(f"  [GraphQL] Probing {gql_url}…")
+            discovery_probe_urls.add(gql_url)
+            gql_schema = await _graphql_introspect(page, role, gql_url)
+            if gql_schema:
+                result.graphql_schemas.append(gql_schema)
+                print(f"    [+] GraphQL schema found: {len(gql_schema.types)} types, "
+                      f"{len(gql_schema.queries)} queries, {len(gql_schema.mutations)} mutations")
 
     # ── Step 4: OpenAPI / Sitemap probing (NEW) ────────────────────
-    for openapi_path in OPENAPI_PATHS:
-        openapi_url = f"{api_base}{openapi_path}"
-        print(f"  [OpenAPI] Probing {openapi_url}…")
-        eps = await _openapi_probe(page, role, openapi_url)
-        if eps:
-            result.endpoints.extend(eps)
-            print(f"    [+] OpenAPI definition found: {len(eps)} endpoints")
+    for api_base in api_bases:
+        for openapi_path in OPENAPI_PATHS:
+            openapi_url = f"{api_base}{openapi_path}"
+            print(f"  [OpenAPI] Probing {openapi_url}…")
+            discovery_probe_urls.add(openapi_url)
+            eps = await _openapi_probe(page, role, openapi_url)
+            if eps:
+                result.endpoints.extend(eps)
+                print(f"    [+] OpenAPI definition found: {len(eps)} endpoints")
 
     print(f"  [Discovery] Probing robots.txt…")
-    extra_eps = await _probe_sitemap_and_robots(page, role)
+    extra_eps = await _probe_sitemap_and_robots(page, role, discovery_probe_urls)
     if extra_eps:
         result.endpoints.extend(extra_eps)
         print(f"    [+] Found {len(extra_eps)} endpoints from robots.txt")
         
     print(f"  [Discovery] Extracting API endpoints from {len(result.js_files)} JS files…")
-    js_eps = await _extract_js_endpoints(page, role, result.js_files)
+    js_eps = await _extract_js_endpoints(page, role, result.js_files, api_bases)
     if js_eps:
         result.endpoints.extend(js_eps)
         print(f"    [+] Found {len(js_eps)} endpoints from JS bundles")
