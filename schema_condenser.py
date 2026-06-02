@@ -412,25 +412,9 @@ class SchemaCondenser:
             schema = self._condense_group(schema_hash, group_endpoints)
             schemas.append(schema)
 
-        # Step 3b: Drop schemas with zero injectable parameters
-        valid_schemas = []
-        no_param_dropped = []
-        for s in schemas:
-            if s.params or s.form_fields or s.has_graphql or s.is_file_upload:
-                valid_schemas.append(s)
-            else:
-                no_param_dropped.append({
-                    "url": s.path,
-                    "method": s.method,
-                    "role": ",".join(s.roles) if s.roles else "unknown",
-                    "reason": "No injectable parameters"
-                })
-        
-        schemas = valid_schemas
-        if no_param_dropped:
-            print(f"[M2] Dropped {len(no_param_dropped)} schema(s) with no injectable parameters")
-            if self.db:
-                self.db.insert_dropped_schemas(no_param_dropped)
+        # Step 3b: DO NOT drop schemas with zero injectable parameters (per user feedback)
+        # Retain all structurally grouped schemas so they are passed to the LLM (or fallback logic)
+        # to generate baseline payloads like IDOR or path traversal on the path segments themselves.
 
         # Step 4: Sort by endpoint count (most common schemas first)
         schemas.sort(key=lambda s: s.endpoint_count, reverse=True)
@@ -512,6 +496,11 @@ class SchemaCondenser:
             basename = Path(path).name.lower()
             if basename in ("robots.txt", "sitemap.xml", "favicon.ico", ".well-known"):
                 dropped.append({"url": url, "method": method, "role": ep.get("role", "unknown"), "reason": f"Known non-testable resource ({basename})"})
+                continue
+
+            # 4. Skip login and authentication endpoints to prevent account lockout (per user request)
+            if any(kw in path for kw in ("login", "signin", "authenticate", "auth/token")):
+                dropped.append({"url": url, "method": method, "role": ep.get("role", "unknown"), "reason": "Login/Auth endpoint (prevent lockout)"})
                 continue
 
             filtered.append(ep)

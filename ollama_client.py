@@ -432,6 +432,19 @@ class OllamaClient:
                 except json.JSONDecodeError:
                     continue
 
+        # Fallback repair: extract individual JSON objects using regex
+        import re
+        objects = []
+        for match in re.finditer(r'\{[^{}]*\}', cleaned):
+            try:
+                obj = json.loads(match.group(0))
+                objects.append(obj)
+            except json.JSONDecodeError:
+                pass
+        
+        if objects:
+            return objects
+
         raise OllamaJSONParseError(
             f"Could not extract valid JSON from response: {text[:200]}..."
         )
