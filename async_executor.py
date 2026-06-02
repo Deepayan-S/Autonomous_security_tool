@@ -228,11 +228,26 @@ class AsyncPayloadExecutor:
             base_body = task.get("base_body") or "{}"
             try:
                 body_json = json.loads(base_body)
-                if isinstance(body_json, dict) and target in body_json:
-                    return True
+                # Check if target exists as a flat key or nested path
+                if isinstance(body_json, dict):
+                    if target in body_json:
+                        return True
+                    # Check nested path
+                    parts = target.split('.')
+                    curr = body_json
+                    for part in parts:
+                        if isinstance(curr, dict) and part in curr:
+                            curr = curr[part]
+                        elif isinstance(curr, list) and part.isdigit() and int(part) < len(curr):
+                            curr = curr[int(part)]
+                        else:
+                            curr = None
+                            break
+                    if curr is not None:
+                        return True
             except (json.JSONDecodeError, TypeError):
                 pass
-            # If no body match, still allow (could be form param)
+            # If no body match, still allow (could be form param or multipart)
             return True
         # For GET, any param name is valid (appended as query string)
         return True
@@ -262,6 +277,11 @@ class AsyncPayloadExecutor:
                 cookies = json.loads(task["cookies"]) if task["cookies"] else {}
                 if isinstance(cookies, list):
                     cookies = {c["name"]: c["value"] for c in cookies if "name" in c}
+                    
+                # Merge with storage_state cookies if available
+                state_cookies = self._load_storage_state_cookies(task["role"])
+                if state_cookies:
+                    cookies.update(state_cookies)
 
                 # Make clean request (no injection)
                 request_kwargs = {}
@@ -313,6 +333,31 @@ class AsyncPayloadExecutor:
             """, (endpoint_id, payload_id, status_code, resp_hash, delta))
             await db.commit()
 
+    def _set_nested_value(self, obj, target: str, value):
+        """Set a value in a nested dictionary/list using dot notation or list index."""
+        parts = target.split('.')
+        current = obj
+        for part in parts[:-1]:
+            if isinstance(current, dict):
+                current = current.setdefault(part, {})
+            elif isinstance(current, list):
+                if part.isdigit():
+                    idx = int(part)
+                    if idx < len(current):
+                        current = current[idx]
+                    else:
+                        break # Cannot easily extend here
+                else:
+                    break
+        last = parts[-1]
+        if isinstance(current, dict):
+            current[last] = value
+        elif isinstance(current, list):
+            if last.isdigit():
+                idx = int(last)
+                if idx < len(current):
+                    current[idx] = value
+
     def _inject_payload(self, task: dict) -> dict:
         """Injects the payload into the target parameter."""
         target = task["target_param"]
@@ -345,11 +390,11 @@ class AsyncPayloadExecutor:
             base_body = task["base_body"] or "{}"
             try:
                 body_json = json.loads(base_body)
-                if isinstance(body_json, dict) and target in body_json:
-                    body_json[target] = payload
+                if isinstance(body_json, dict) or isinstance(body_json, list):
+                    self._set_nested_value(body_json, target, payload)
                 injected_kwargs["json"] = body_json
             except json.JSONDecodeError:
-                # If form data
+                # If form data or multipart
                 injected_kwargs["data"] = {target: payload}
         else:
             injected_kwargs["params"] = {target: payload}
@@ -370,6 +415,11 @@ class AsyncPayloadExecutor:
                 # Flatten cookies if they are a list of dicts from playwright
                 if isinstance(cookies, list):
                     cookies = {c["name"]: c["value"] for c in cookies if "name" in c}
+                    
+                # Merge with storage_state cookies if available
+                state_cookies = self._load_storage_state_cookies(task["role"])
+                if state_cookies:
+                    cookies.update(state_cookies)
 
                 # Injection (FR-06.2)
                 inject_kwargs = self._inject_payload(task)
@@ -410,6 +460,20 @@ class AsyncPayloadExecutor:
                     )
             except Exception as e:
                 logger.error(f"Task failed for {task['url']}: {e}")
+
+    def _load_storage_state_cookies(self, role: str) -> dict:
+        """Load cookies from Playwright's storage state JSON file."""
+        import os
+        state_path = f"results/state_{role}.json"
+        if not os.path.exists(state_path):
+            return {}
+        try:
+            with open(state_path, 'r', encoding='utf-8') as f:
+                state_data = json.load(f)
+                return {c["name"]: c["value"] for c in state_data.get("cookies", []) if "name" in c}
+        except Exception as e:
+            logger.warning(f"Failed to load storage state for role {role}: {e}")
+            return {}
 
     async def run(self):
         tasks = await self._fetch_tasks()

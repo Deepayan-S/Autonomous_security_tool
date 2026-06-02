@@ -62,6 +62,28 @@ Output MUST be a valid JSON array."""
         except sqlite3.OperationalError:
             pass
 
+    def _verify_xss_sync(self, url: str) -> bool:
+        """Run a headless Playwright instance to verify if XSS executes."""
+        import asyncio
+        from playwright.async_api import async_playwright
+        
+        async def run():
+            try:
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    page = await browser.new_page()
+                    
+                    dialog_fired = []
+                    page.on("dialog", lambda dialog: dialog_fired.append(True) or asyncio.create_task(dialog.dismiss()))
+                    
+                    await page.goto(url, timeout=5000)
+                    await asyncio.sleep(1)
+                    await browser.close()
+                    return len(dialog_fired) > 0
+            except Exception:
+                return False
+        return asyncio.run(run())
+
     def fetch_pending_anomalies(self) -> List[Dict]:
         """Fetches pending anomalies with endpoint and payload context."""
         cursor = self.db.execute("""
@@ -97,15 +119,46 @@ Output MUST be a valid JSON array."""
 
         # Reflected XSS — payload with special chars reflected
         if "reflected in response" in delta.lower() and vuln_class in ("XSS", "SECOND_ORDER_XSS", "POLYGLOT"):
-            return {
-                "anomaly_id": a_id,
-                "classification": "Confirmed Vulnerability",
-                "confidence_score": 0.95,
-                "cve_cwe_mapping": "CWE-79",
-                "cvss_score": 6.1,
-                "cvss_justification": "Reflected XSS — injection payload echoed in response with special characters intact",
-                "remediation_snippet": "Encode all user input before rendering in HTML context. Use context-aware output encoding.",
-            }
+            method = anomaly.get("method", "").upper()
+            if method == "GET" and anomaly.get("target_param") and anomaly.get("payload"):
+                import urllib.parse
+                parsed = urllib.parse.urlparse(anomaly.get("url", ""))
+                query = urllib.parse.parse_qs(parsed.query)
+                query[anomaly["target_param"]] = anomaly["payload"]
+                new_query = urllib.parse.urlencode(query, doseq=True)
+                injected_url = urllib.parse.urlunparse(parsed._replace(query=new_query))
+                
+                verified = self._verify_xss_sync(injected_url)
+                if verified:
+                    return {
+                        "anomaly_id": a_id,
+                        "classification": "Confirmed Vulnerability",
+                        "confidence_score": 0.99,
+                        "cve_cwe_mapping": "CWE-79",
+                        "cvss_score": 6.1,
+                        "cvss_justification": "Verified XSS — Playwright executed the injected script.",
+                        "remediation_snippet": "Encode all user input before rendering in HTML context.",
+                    }
+                else:
+                    return {
+                        "anomaly_id": a_id,
+                        "classification": "Likely False Positive",
+                        "confidence_score": 0.8,
+                        "cve_cwe_mapping": "",
+                        "cvss_score": 0.0,
+                        "cvss_justification": "Payload reflected but did not execute in Playwright browser.",
+                        "remediation_snippet": "",
+                    }
+            else:
+                return {
+                    "anomaly_id": a_id,
+                    "classification": "Confirmed Vulnerability",
+                    "confidence_score": 0.95,
+                    "cve_cwe_mapping": "CWE-79",
+                    "cvss_score": 6.1,
+                    "cvss_justification": "Reflected XSS — injection payload echoed in response with special characters intact",
+                    "remediation_snippet": "Encode all user input before rendering in HTML context. Use context-aware output encoding.",
+                }
 
         # SQLi reflection
         if "reflected in response" in delta.lower() and vuln_class == "SQLI":
@@ -143,6 +196,20 @@ Output MUST be a valid JSON array."""
                 "cvss_justification": "Path traversal payload triggered expected file content in response",
                 "remediation_snippet": "Validate file paths against an allowlist. Use canonical path resolution and reject any path containing '..'.",
             }
+            
+        # Reclassify generic 200 OKs without reflection/strong indicators as INFO
+        if vuln_class in ("SQLI", "IDOR", "COMMAND_INJECTION", "SSRF", "PATH_TRAVERSAL"):
+            if "status code: 200" in delta.lower():
+                if "reflected in response" not in delta.lower() and "bypass" not in delta.lower() and "expected string" not in delta.lower():
+                    return {
+                        "anomaly_id": a_id,
+                        "classification": "INFO: Anomaly",
+                        "confidence_score": 0.5,
+                        "cve_cwe_mapping": "",
+                        "cvss_score": 0.0,
+                        "cvss_justification": "Unexpected 200 OK or generic anomaly without strong reflection or bypass evidence.",
+                        "remediation_snippet": "Review endpoint behavior manually.",
+                    }
 
         return None  # Falls through to LLM triage
 
@@ -248,6 +315,7 @@ Output MUST be a valid JSON array."""
             "Confirmed Vulnerability": 0,
             "Likely False Positive": 0,
             "Requires Manual Review": 0,
+            "INFO: Anomaly": 0,
             "pending": 0,
         }
         
@@ -293,12 +361,37 @@ Output MUST be a valid JSON array."""
                 grouped_findings[vclass] = []
             grouped_findings[vclass].append(f)
 
+        # Fetch metadata
+        metadata = {}
+        try:
+            meta_cursor = self.db.execute("SELECT key, value FROM metadata")
+            for row in meta_cursor.fetchall():
+                metadata[row["key"]] = row["value"]
+        except sqlite3.OperationalError:
+            pass
+
+        # Fetch coverage stats
+        coverage_stats = {
+            "endpoints_crawled": 0,
+            "endpoints_fuzzed": 0,
+            "schemas_dropped": 0
+        }
+        try:
+            coverage_stats["endpoints_crawled"] = self.db.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0]
+            # Get the number of unique endpoints that were actually assigned payloads
+            coverage_stats["endpoints_fuzzed"] = self.db.execute("SELECT COUNT(DISTINCT schema_hash) FROM payload_cache").fetchone()[0]
+            coverage_stats["schemas_dropped"] = self.db.execute("SELECT COUNT(*) FROM dropped_schemas").fetchone()[0]
+        except sqlite3.OperationalError:
+            pass
+
         report_data = {
             "summary": stats,
             "findings": findings,
             "grouped_findings": grouped_findings,
             "coverage": coverage,
             "passive_findings": passive_findings,
+            "metadata": metadata,
+            "coverage_stats": coverage_stats,
         }
 
         # Dump JSON

@@ -393,7 +393,10 @@ class SchemaCondenser:
         print(f"[M2] Loaded {len(endpoints)} raw endpoint(s)")
 
         # Step 1b: Filter out static resources and non-testable endpoints
-        endpoints = self._filter_testable_endpoints(endpoints)
+        endpoints, dropped_eps = self._filter_testable_endpoints(endpoints)
+        if dropped_eps and self.db:
+            self.db.insert_dropped_schemas(dropped_eps)
+            
         if not endpoints:
             print("[M2] No testable endpoints remain after filtering static resources")
             return []
@@ -410,10 +413,24 @@ class SchemaCondenser:
             schemas.append(schema)
 
         # Step 3b: Drop schemas with zero injectable parameters
-        before_count = len(schemas)
-        schemas = [s for s in schemas if s.params or s.form_fields or s.has_graphql or s.is_file_upload]
-        if before_count != len(schemas):
-            print(f"[M2] Dropped {before_count - len(schemas)} schema(s) with no injectable parameters")
+        valid_schemas = []
+        no_param_dropped = []
+        for s in schemas:
+            if s.params or s.form_fields or s.has_graphql or s.is_file_upload:
+                valid_schemas.append(s)
+            else:
+                no_param_dropped.append({
+                    "url": s.path,
+                    "method": s.method,
+                    "role": ",".join(s.roles) if s.roles else "unknown",
+                    "reason": "No injectable parameters"
+                })
+        
+        schemas = valid_schemas
+        if no_param_dropped:
+            print(f"[M2] Dropped {len(no_param_dropped)} schema(s) with no injectable parameters")
+            if self.db:
+                self.db.insert_dropped_schemas(no_param_dropped)
 
         # Step 4: Sort by endpoint count (most common schemas first)
         schemas.sort(key=lambda s: s.endpoint_count, reverse=True)
@@ -455,7 +472,7 @@ class SchemaCondenser:
         ".mp4", ".webm", ".mp3", ".ogg",
     }
 
-    def _filter_testable_endpoints(self, endpoints: list[dict]) -> list[dict]:
+    def _filter_testable_endpoints(self, endpoints: list[dict]) -> tuple[list[dict], list[dict]]:
         """
         Remove endpoints that cannot yield real vulnerabilities:
           - Static files (HTML pages, JS bundles, CSS, images, fonts)
@@ -466,7 +483,7 @@ class SchemaCondenser:
         with query params or POST bodies.
         """
         filtered = []
-        dropped = 0
+        dropped = []
 
         for ep in endpoints:
             url = ep.get("url", "")
@@ -477,7 +494,7 @@ class SchemaCondenser:
             # 1. Skip static file extensions
             ext = Path(path).suffix.lower()
             if ext in self.STATIC_EXTENSIONS:
-                dropped += 1
+                dropped.append({"url": url, "method": method, "role": ep.get("role", "unknown"), "reason": f"Static file extension ({ext})"})
                 continue
 
             # 2. Skip SPA hash-only routes that have no real API path
@@ -488,21 +505,21 @@ class SchemaCondenser:
                 if not any(seg in path for seg in ("api", "graphql", "auth", "rest")):
                     body = ep.get("body")
                     if not body:
-                        dropped += 1
+                        dropped.append({"url": url, "method": method, "role": ep.get("role", "unknown"), "reason": "SPA hash-only route"})
                         continue
 
             # 3. Skip known non-testable resource paths
             basename = Path(path).name.lower()
             if basename in ("robots.txt", "sitemap.xml", "favicon.ico", ".well-known"):
-                dropped += 1
+                dropped.append({"url": url, "method": method, "role": ep.get("role", "unknown"), "reason": f"Known non-testable resource ({basename})"})
                 continue
 
             filtered.append(ep)
 
         if dropped:
-            print(f"[M2] Filtered out {dropped} static/non-testable endpoint(s), keeping {len(filtered)}")
+            print(f"[M2] Filtered out {len(dropped)} static/non-testable endpoint(s), keeping {len(filtered)}")
 
-        return filtered
+        return filtered, dropped
 
     def _load_endpoints(self, json_fallback_path: Optional[str] = None) -> list[dict]:
         """Load endpoints from SQLite or JSON fallback."""

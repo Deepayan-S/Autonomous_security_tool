@@ -420,16 +420,20 @@ class PayloadOrchestrator:
                 matched_hash = self._match_payload_to_schema(
                     target_param, batch_hashes, schema_lookup
                 )
-
-                payload_record = {
-                    "schema_hash": matched_hash or (batch_hashes[0] if batch_hashes else ""),
-                    "vuln_class": payload_dict.get("vuln_class", "UNKNOWN"),
-                    "payload": payload_dict["payload"],
-                    "target_param": target_param,
-                    "expected_indicator": payload_dict.get("expected_indicator", ""),
-                }
-                validated.append(payload_record)
-                self._total_generated += 1
+                
+                if matched_hash:
+                    payload_record = {
+                        "schema_hash": matched_hash,
+                        "vuln_class": payload_dict.get("vuln_class", "UNKNOWN"),
+                        "payload": payload_dict["payload"],
+                        "target_param": target_param,
+                        "expected_indicator": payload_dict.get("expected_indicator", ""),
+                    }
+                    validated.append(payload_record)
+                    self._total_generated += 1
+                else:
+                    self._total_invalid += 1
+                    print(f"[M3] Rejected payload (no matching parameter '{target_param}' in batch): {payload_dict}")
             else:
                 self._total_invalid += 1
                 print(f"[M3] Skipped invalid payload: {payload_dict}")
@@ -455,11 +459,20 @@ class PayloadOrchestrator:
         """
         for h in batch_hashes:
             schema = schema_lookup.get(h)
-            if schema and target_param in schema.params:
-                return h
-            # Also check form fields
-            if schema and target_param in schema.form_fields:
-                return h
+            if schema:
+                if target_param in schema.params:
+                    return h
+                if target_param in schema.form_fields:
+                    return h
+                if target_param.startswith("path_seg_"):
+                    # Basic bounds check if it's a valid path segment for this schema
+                    try:
+                        idx = int(target_param.split("_")[2])
+                        path_parts = schema.path.strip("/").split("/")
+                        if idx < len(path_parts):
+                            return h
+                    except (IndexError, ValueError):
+                        pass
         return None
 
     # -- Fallback Generation (Risk R-01) --------------------------

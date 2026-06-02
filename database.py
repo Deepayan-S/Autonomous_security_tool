@@ -87,6 +87,25 @@ CREATE TABLE IF NOT EXISTS anomalies (
 );
 """
 
+CREATE_METADATA_TABLE = """
+CREATE TABLE IF NOT EXISTS metadata (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT    NOT NULL UNIQUE,
+    value           TEXT
+);
+"""
+
+CREATE_DROPPED_SCHEMAS_TABLE = """
+CREATE TABLE IF NOT EXISTS dropped_schemas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT    NOT NULL,
+    method          TEXT    NOT NULL,
+    role            TEXT    NOT NULL,
+    reason          TEXT    NOT NULL,
+    dropped_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 # Index for fast lookup by schema_hash (used heavily by M2/M3/M4)
 CREATE_SCHEMA_HASH_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_endpoints_schema_hash
@@ -162,6 +181,8 @@ class AHVFDatabase:
         conn.execute(CREATE_PAYLOAD_CACHE_TABLE)
         conn.execute(CREATE_ANOMALIES_TABLE)
         conn.execute(CREATE_PASSIVE_FINDINGS_TABLE)
+        conn.execute(CREATE_METADATA_TABLE)
+        conn.execute(CREATE_DROPPED_SCHEMAS_TABLE)
         conn.execute(CREATE_SCHEMA_HASH_INDEX)
         conn.execute(CREATE_PAYLOAD_SCHEMA_INDEX)
         conn.execute(CREATE_PASSIVE_FINDINGS_INDEX)
@@ -435,6 +456,33 @@ class AHVFDatabase:
 
         return summary
 
+    def insert_metadata(self, key: str, value: str):
+        conn = self.connect()
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+        conn.commit()
+
+    def get_metadata(self) -> dict:
+        conn = self.connect()
+        cursor = conn.execute("SELECT key, value FROM metadata")
+        return {row["key"]: row["value"] for row in cursor.fetchall()}
+
+    def insert_dropped_schemas(self, schemas: list[dict]):
+        conn = self.connect()
+        for s in schemas:
+            conn.execute(
+                "INSERT INTO dropped_schemas (url, method, role, reason) VALUES (?, ?, ?, ?)",
+                (s.get("url", ""), s.get("method", "GET"), s.get("role", "unknown"), s.get("reason", "unknown"))
+            )
+        conn.commit()
+
+    def get_dropped_schemas(self) -> list[dict]:
+        conn = self.connect()
+        cursor = conn.execute("SELECT * FROM dropped_schemas ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+
     # ── Utility ──────────────────────────────────────────────────
 
     def clear_all(self):
@@ -444,6 +492,8 @@ class AHVFDatabase:
         conn.execute("DELETE FROM payload_cache")
         conn.execute("DELETE FROM endpoints")
         conn.execute("DELETE FROM passive_findings")
+        conn.execute("DELETE FROM metadata")
+        conn.execute("DELETE FROM dropped_schemas")
         conn.commit()
         print("[DB] All tables cleared")
 
@@ -451,7 +501,7 @@ class AHVFDatabase:
         """Return row counts for all tables."""
         conn = self.connect()
         stats = {}
-        for table in ("endpoints", "payload_cache", "anomalies", "passive_findings"):
+        for table in ("endpoints", "payload_cache", "anomalies", "passive_findings", "dropped_schemas"):
             cursor = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}")
             stats[table] = cursor.fetchone()["cnt"]
         return stats

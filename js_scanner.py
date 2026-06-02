@@ -495,11 +495,11 @@ class JSScanner:
         return chunks[:10]
 
     def _deduplicate(self, findings: list[dict]) -> list[dict]:
-        """Deduplicate findings by (finding_text, cwe_id) across files."""
+        """Deduplicate findings by (url, finding_text, cwe_id) across files."""
         seen = set()
         unique = []
         for f in findings:
-            key = (f.get("finding", ""), f.get("cwe_id", ""))
+            key = (f.get("url", ""), f.get("finding", ""), f.get("cwe_id", ""))
             if key not in seen:
                 seen.add(key)
                 unique.append(f)

@@ -39,7 +39,7 @@ from ollama_client import OllamaClient, OllamaError
 #  PHASE RUNNERS
 # ─────────────────────────────────────────────
 
-def run_crawl():
+def run_crawl(interactive: bool = False):
     """
     Phase 1: Run M1 Crawler.
 
@@ -56,7 +56,10 @@ def run_crawl():
 
     # Run Crawler.py as a subprocess to ensure clean event loop and global state
     try:
-        result = subprocess.run([sys.executable, "Crawler.py"])
+        cmd = [sys.executable, "Crawler.py"]
+        if interactive:
+            cmd.append("--interactive")
+        result = subprocess.run(cmd)
         return result.returncode == 0
     except KeyboardInterrupt:
         print("\n[Pipeline] Crawl interrupted by user.")
@@ -185,7 +188,7 @@ def run_executor() -> bool:
     import asyncio
     from async_executor import AsyncPayloadExecutor
     try:
-        executor = AsyncPayloadExecutor(concurrency=500)
+        executor = AsyncPayloadExecutor(concurrency=20)
         asyncio.run(executor.run())
         return True
     except Exception as e:
@@ -352,7 +355,7 @@ def run_bac_compare(db: AHVFDatabase) -> bool:
 #  PIPELINE ORCHESTRATOR
 # ─────────────────────────────────────────────
 
-def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool = False):
+def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool = False, interactive: bool = False):
     """
     Run the AHVF pipeline.
 
@@ -360,6 +363,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         phase: Which phase(s) to run
         skip_crawl: If True, skip crawl even in "all" mode (reuse existing data)
         deep_scan: If True, enable LLM deep analysis in JS scanner
+        interactive: If True, prompt for crawler configuration
     """
     print(f"\n{'='*60}")
     print(f"  AHVF — Autonomous Hybrid VAPT Framework")
@@ -385,18 +389,20 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
                 if crawl_json.exists():
                     print("[Pipeline] Skipping crawl — using existing crawl_results.json")
                     if phase == "all":
-                        _import_crawl_to_db(db)
+                        _import_crawl_to_db(db, skip_crawl)
                 else:
                     print("[Pipeline] ERROR: --skip-crawl specified but no crawl_results.json found")
                     return
             else:
-                ok = run_crawl()
-                if not ok and phase == "crawl":
+                ok = run_crawl(interactive=interactive)
+                if not ok:
+                    print("[Pipeline] Crawl failed. Stopping pipeline.")
                     return
 
+            # Import crawl data into SQLite (for both "crawl" and "all" phases)
+            _import_crawl_to_db(db, skip_crawl)
+
             if phase == "crawl":
-                # Import crawl data into SQLite
-                _import_crawl_to_db(db)
                 return
 
         # ── Phase 1b: JS Scan ────────────────────────────────────
@@ -416,8 +422,8 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
                 _import_crawl_to_db(db)
 
             ok = run_condense(db)
-            if not ok:
-                print("[Pipeline] Condensation failed. Stopping.")
+            if not ok and phase == "condense":
+                print("[Pipeline] Condensation failed.")
                 return
             if phase == "condense":
                 return
@@ -425,7 +431,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         # ── Phase 2b: Generate Payloads ──────────────────────────
         if phase in ("all", "generate"):
             ok = run_generate(db)
-            if not ok:
+            if not ok and phase == "generate":
                 print("[Pipeline] Payload generation failed.")
                 return
             if phase == "generate":
@@ -452,7 +458,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         # ── Phase 3: Execute Fuzzing ──────────────────────────────
         if phase in ("all", "execute"):
             ok = run_executor()
-            if not ok:
+            if not ok and phase == "execute":
                 print("[Pipeline] Executor failed.")
                 return
             if phase == "execute":
@@ -477,7 +483,7 @@ def run_pipeline(phase: str = "all", skip_crawl: bool = False, deep_scan: bool =
         db.close()
 
 
-def _import_crawl_to_db(db: AHVFDatabase):
+def _import_crawl_to_db(db: AHVFDatabase, skip_crawl: bool = False):
     """Import crawl_results.json into the SQLite endpoints table."""
     import json
 
@@ -501,6 +507,13 @@ def _import_crawl_to_db(db: AHVFDatabase):
         print(f"[Pipeline] Imported {len(endpoints)} endpoint(s) into SQLite")
     else:
         print("[Pipeline] No endpoints found in crawl data")
+        
+    meta = raw.get("meta", {})
+    if meta:
+        db.insert_metadata("crawl_target", meta.get("target", ""))
+        db.insert_metadata("crawl_generated", meta.get("generated", ""))
+        db.insert_metadata("crawl_roles", ",".join(meta.get("roles", [])))
+        db.insert_metadata("data_freshness", "reused" if skip_crawl else "fresh")
 
 
 # ─────────────────────────────────────────────
@@ -541,9 +554,14 @@ Examples:
         action="store_true",
         help="Enable LLM deep analysis of JS files (slower, more thorough)",
     )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Force CLI input for crawler configuration, ignoring config file",
+    )
 
     args = parser.parse_args()
-    run_pipeline(phase=args.phase, skip_crawl=args.skip_crawl, deep_scan=args.deep_scan)
+    run_pipeline(phase=args.phase, skip_crawl=args.skip_crawl, deep_scan=args.deep_scan, interactive=args.interactive)
 
 
 if __name__ == "__main__":

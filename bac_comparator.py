@@ -75,6 +75,34 @@ def _is_common_public_endpoint(url: str) -> bool:
     return False
 
 
+def _extract_ids_from_json(data) -> set:
+    ids = set()
+    if isinstance(data, dict):
+        for v in data.values():
+            ids.update(_extract_ids_from_json(v))
+    elif isinstance(data, list):
+        for item in data:
+            ids.update(_extract_ids_from_json(item))
+    elif isinstance(data, (str, int)):
+        val = str(data)
+        if val.isdigit() and len(val) <= 10:
+            ids.add(val)
+        elif re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', val, re.IGNORECASE):
+            ids.add(val)
+    return ids
+
+def _substitute_id_in_json(data, old_id: str, new_id: str):
+    if isinstance(data, dict):
+        return {k: _substitute_id_in_json(v, old_id, new_id) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_substitute_id_in_json(item, old_id, new_id) for item in data]
+    elif isinstance(data, (str, int)):
+        val = str(data)
+        if val == old_id:
+            return int(new_id) if isinstance(data, int) and new_id.isdigit() else new_id
+        return data
+    return data
+
 def _normalize_endpoint_key(ep: dict) -> tuple:
     """Normalize an endpoint to (path, method) for comparison across roles.
     
@@ -120,6 +148,43 @@ class BACComparator:
         self.login_agent = login_agent
         self.credentials = credentials or {}
         self.findings: list[dict] = []
+        self.ollama_client = None
+
+    async def _verify_bac_with_ai(self, method: str, url: str, role_low: str, role_high: str, replay_status: int, replay_body: str) -> bool:
+        """Use LLM to verify if a 200 OK response is a genuine BAC leak or a soft error."""
+        if replay_status != 200:
+            return False
+
+        if not self.ollama_client:
+            try:
+                from ollama_client import OllamaClient
+                self.ollama_client = OllamaClient()
+                self.ollama_client.health_check()
+            except Exception as e:
+                logger.error(f"Failed to initialize OllamaClient for BAC triage: {e}")
+                return True  # Fallback to True if AI is unavailable
+
+        system_prompt = '''You are an expert API security analyst. A lower privileged user attempted to access an endpoint reserved for a higher privileged user.
+The server returned HTTP 200. However, many APIs return HTTP 200 even for errors (e.g. {"success": false, "message": "Unauthorized"}).
+Analyze the response body and determine if the access was ACTUALLY successful (sensitive data leaked, state changed, or action confirmed) or if it's just a soft error.
+Respond with a JSON object containing exactly one boolean key "is_vulnerable".
+Example 1: {"success": false, "message": "Access denied"} -> {"is_vulnerable": false}
+Example 2: {"success": true, "data": {"user": "admin"}} -> {"is_vulnerable": true}
+Example 3: <html><body>Login required</body></html> -> {"is_vulnerable": false}'''
+        
+        user_prompt = f"Endpoint: {method} {url}\nResponse Body:\n{replay_body[:1500]}"
+        
+        try:
+            result = await asyncio.to_thread(
+                self.ollama_client.generate_json,
+                system_prompt,
+                user_prompt,
+                temperature=0.1
+            )
+            return bool(result.get("is_vulnerable", True))
+        except Exception as e:
+            logger.warning(f"AI BAC verification failed: {e}. Defaulting to True.")
+            return True
 
     def _get_privilege_rank(self, role: str) -> int:
         """Get numeric privilege rank for a role. Higher = more privileged."""
@@ -195,6 +260,20 @@ class BACComparator:
     async def _get_session_headers(self, role: str) -> dict:
         """Get fresh auth headers for a role using LoginAgent or cached credentials."""
         headers = {"User-Agent": "AHVF-SecurityScanner/1.0 (authorized-testing)"}
+        
+        cookies = {}
+
+        # Load from storage_state if available (Pass 3 requirement)
+        import os
+        state_path = f"results/state_{role}.json"
+        if os.path.exists(state_path):
+            try:
+                with open(state_path, 'r', encoding='utf-8') as f:
+                    state_data = json.load(f)
+                    for c in state_data.get("cookies", []):
+                        cookies[c["name"]] = c["value"]
+            except Exception as e:
+                logger.warning(f"Failed to load storage state for role {role}: {e}")
 
         # Try LoginAgent first
         if self.login_agent:
@@ -208,11 +287,8 @@ class BACComparator:
                         headers.update(session_data.headers)
                         # Also set cookies via Cookie header
                         if session_data.cookies:
-                            cookie_str = "; ".join(
-                                f"{c['name']}={c['value']}" for c in session_data.cookies
-                            )
-                            headers["Cookie"] = cookie_str
-                        return headers
+                            for c in session_data.cookies:
+                                cookies[c["name"]] = c["value"]
                 except Exception as e:
                     logger.warning(f"LoginAgent failed for role '{role}': {e}")
 
@@ -223,7 +299,24 @@ class BACComparator:
                 jwt = ep.get("jwt")
                 if jwt:
                     headers["Authorization"] = f"Bearer {jwt}"
+                ep_cookies = ep.get("cookies")
+                if ep_cookies:
+                    try:
+                        import json as local_json
+                        ep_cookies = local_json.loads(ep_cookies)
+                        if isinstance(ep_cookies, list):
+                            for c in ep_cookies:
+                                cookies[c["name"]] = c["value"]
+                        elif isinstance(ep_cookies, dict):
+                            cookies.update(ep_cookies)
+                    except Exception:
+                        pass
+                if jwt or cookies:
                     break
+                    
+        if cookies:
+            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+            headers["Cookie"] = cookie_str
 
         return headers
 
@@ -309,16 +402,18 @@ class BACComparator:
                         continue
 
                     if result["status"] == 200:
-                        self.findings.append({
-                            "url": url,
-                            "check_type": "bac",
-                            "finding": f"BAC: '{high_role}'-only endpoint accessible by '{low_role}' ({method})",
-                            "severity": "Critical",
-                            "evidence": f"{method} {url} → HTTP {result['status']} (body: {result['body_length']} bytes)",
-                            "cwe_id": "CWE-284",
-                            "remediation": "Enforce server-side authorization. Verify user role/permissions on every request.",
-                            "role": low_role,
-                        })
+                        is_vuln = await self._verify_bac_with_ai(method, url, low_role, high_role, result["status"], result.get("body_preview", ""))
+                        if is_vuln:
+                            self.findings.append({
+                                "url": url,
+                                "check_type": "bac",
+                                "finding": f"BAC: '{high_role}'-only endpoint accessible by '{low_role}' ({method})",
+                                "severity": "Critical",
+                                "evidence": f"{method} {url} → HTTP {result['status']} (body: {result['body_length']} bytes)",
+                                "cwe_id": "CWE-284",
+                                "remediation": "Enforce server-side authorization. Verify user role/permissions on every request.",
+                                "role": low_role,
+                            })
                     elif result["status"] in (401, 403):
                         logger.debug(f"    Access correctly denied: {method} {url} → {result['status']}")
 
@@ -364,6 +459,20 @@ class BACComparator:
                             ids.add(val)
                             has_id = True
 
+                # Extract IDs from JSON body
+                body_data = ep.get("body")
+                if body_data:
+                    try:
+                        import json as local_json
+                        body_json = local_json.loads(body_data)
+                        body_ids = _extract_ids_from_json(body_json)
+                        if body_ids:
+                            ids.update(body_ids)
+                            has_id = True
+                            ep["_parsed_body"] = body_json  # cache for later substitution
+                    except Exception:
+                        pass
+
                 # Tag endpoints with numeric/UUID segments
                 if has_id:
                     id_endpoints.append(ep)
@@ -394,9 +503,10 @@ class BACComparator:
 
                     parsed = urllib.parse.urlparse(ep["url"])
                     segments = parsed.path.split("/")
-
+                    
+                    # 1. Substitute in path segments
                     for seg_idx, seg in enumerate(segments):
-                        if not seg.isdigit():
+                        if not seg.isdigit() and not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', seg, re.IGNORECASE):
                             continue
 
                         # Substitute with a foreign ID
@@ -404,9 +514,7 @@ class BACComparator:
                             new_segments = segments.copy()
                             new_segments[seg_idx] = foreign_id
                             new_path = "/".join(new_segments)
-                            new_url = urllib.parse.urlunparse(
-                                parsed._replace(path=new_path)
-                            )
+                            new_url = urllib.parse.urlunparse(parsed._replace(path=new_path))
                             
                             body_data = ep.get("body", "")
 
@@ -415,16 +523,46 @@ class BACComparator:
                                 continue
 
                             if result["status"] == 200 and result["body_length"] > 50:
-                                self.findings.append({
-                                    "url": new_url,
-                                    "check_type": "idor",
-                                    "finding": f"IDOR: '{role_a}' accessed '{role_b}' data by substituting ID {seg} → {foreign_id}",
-                                    "severity": "Critical",
-                                    "evidence": f"{ep['method']} {new_url} → HTTP {result['status']} (body: {result['body_length']} bytes)",
-                                    "cwe_id": "CWE-639",
-                                    "remediation": "Validate object ownership server-side. Ensure users can only access their own resources.",
-                                    "role": role_a,
-                                })
+                                is_vuln = await self._verify_bac_with_ai(ep["method"], new_url, role_a, role_b, result["status"], result.get("body_preview", ""))
+                                if is_vuln:
+                                    self.findings.append({
+                                        "url": new_url,
+                                        "check_type": "idor",
+                                        "finding": f"IDOR (Path): '{role_a}' accessed '{role_b}' data by substituting ID {seg} → {foreign_id}",
+                                        "severity": "Critical",
+                                        "evidence": f"{ep['method']} {new_url} → HTTP {result['status']}",
+                                        "cwe_id": "CWE-639",
+                                        "remediation": "Validate object ownership server-side.",
+                                        "role": role_a,
+                                    })
+
+                    # 2. Substitute in JSON body
+                    body_json = ep.get("_parsed_body")
+                    if body_json:
+                        body_ids = _extract_ids_from_json(body_json)
+                        for b_id in body_ids:
+                            for foreign_id in list(foreign_ids)[:3]:
+                                new_body_json = _substitute_id_in_json(body_json, b_id, foreign_id)
+                                import json as local_json
+                                new_body_str = local_json.dumps(new_body_json)
+                                
+                                result = await self._make_request(session, ep["method"], ep["url"], headers_a, data=new_body_str)
+                                if not result:
+                                    continue
+
+                                if result["status"] == 200 and result["body_length"] > 50:
+                                    is_vuln = await self._verify_bac_with_ai(ep["method"], ep["url"], role_a, role_b, result["status"], result.get("body_preview", ""))
+                                    if is_vuln:
+                                        self.findings.append({
+                                            "url": ep["url"],
+                                            "check_type": "idor",
+                                            "finding": f"IDOR (Body): '{role_a}' accessed '{role_b}' data by substituting ID {b_id} → {foreign_id} in JSON body",
+                                            "severity": "Critical",
+                                            "evidence": f"{ep['method']} {ep['url']} with body ID {b_id} → HTTP {result['status']}",
+                                            "cwe_id": "CWE-639",
+                                            "remediation": "Validate object ownership server-side based on session, do not trust client-provided IDs.",
+                                            "role": role_a,
+                                        })
 
     # ── FR-03.4: HTTP Verb Tampering ─────────────────────────
 
@@ -538,6 +676,16 @@ class BACComparator:
 
     def _write_results(self) -> None:
         """Write findings to JSON file."""
+        # Deduplicate findings by (url, check_type, finding) (Pass 4 requirement)
+        seen = set()
+        unique = []
+        for f in self.findings:
+            key = (f.get("url", ""), f.get("check_type", ""), f.get("finding", ""))
+            if key not in seen:
+                seen.add(key)
+                unique.append(f)
+        self.findings = unique
+        
         output_path = RESULTS_DIR / "bac_scan_results.json"
         with open(output_path, "w", encoding="utf-8") as fp:
             json.dump(self.findings, fp, indent=2)

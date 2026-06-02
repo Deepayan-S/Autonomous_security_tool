@@ -143,16 +143,33 @@ def _fingerprint(url: str, method: str) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def _in_scope(url: str) -> bool:
+def _in_scope(url: str, is_api: bool = False) -> bool:
     try:
-        host = urllib.parse.urlparse(url).hostname or ""
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or ""
 
         allowed = any(
             host == s or host.endswith(f".{s}")
             for s in SCOPE_HOSTS
         )
+        
+        if not allowed:
+            return False
+            
+        if TARGET_BASE_URL and not is_api:
+            target_parsed = urllib.parse.urlparse(TARGET_BASE_URL)
+            base_path = target_parsed.path
+            if not base_path.endswith('/'):
+                if '/' in base_path:
+                    base_path = base_path.rsplit('/', 1)[0] + '/'
+                else:
+                    base_path = '/'
+                    
+            url_path = parsed.path if parsed.path else '/'
+            if not url_path.startswith(base_path):
+                return False
 
-        return allowed
+        return True
 
     except Exception:
         return False
@@ -552,7 +569,8 @@ def _make_request_handler(
         url = request.url
         method = request.method
 
-        if not _in_scope(url) or _is_excluded(url):
+        is_api = request.resource_type in ("fetch", "xhr")
+        if not _in_scope(url, is_api=is_api) or _is_excluded(url):
             return
 
         # Static assets — drop entirely (never useful for security testing)
@@ -642,8 +660,46 @@ def _make_response_handler(records: list[EndpointRecord], role: str):
                 rec.response_body = response_body
                 break
 
-
     return on_response
+
+async def _extract_js_endpoints(page: Page, role: str, js_files: list) -> list[EndpointRecord]:
+    """Extract API endpoints from JS bundles using regex (FR-02.3)."""
+    endpoints = []
+    seen = set()
+    patterns = [
+        r"fetch\(['\"]([^'\"]+)['\"]",
+        r"axios\.(?:get|post|put|delete|patch|head|options)\(['\"]([^'\"]+)['\"]",
+        r"(?:url|endpoint|api)\s*[:=]\s*['\"]([^'\"]+)['\"]",
+        r"\.ajax\(\{\s*url\s*:\s*['\"]([^'\"]+)['\"]"
+    ]
+    
+    for url in js_files:
+        try:
+            resp = await page.request.get(url)
+            if not resp.ok:
+                continue
+            text = await resp.text()
+            for p in patterns:
+                for match in re.finditer(p, text, re.IGNORECASE):
+                    ep = match.group(1)
+                    if ep.startswith("/") or ep.startswith("http"):
+                        full_url = urllib.parse.urljoin(TARGET_BASE_URL, ep)
+                        if _in_scope(full_url) and not _is_excluded(full_url):
+                            fp = _fingerprint(full_url, "GET")
+                            if fp not in seen:
+                                seen.add(fp)
+                                endpoints.append(EndpointRecord(
+                                    url=full_url,
+                                    method="GET",
+                                    role=role,
+                                    source="js_bundle",
+                                    schema_hash=fp,
+                                ))
+        except Exception as e:
+            print(f"    [JS Extract] Failed to extract from {url}: {e}")
+            pass
+            
+    return endpoints
 
 def _normalize_spa_url(url: str) -> str:
     if "#" in url:
@@ -652,10 +708,41 @@ def _normalize_spa_url(url: str) -> str:
 
 
 # ─────────────────────────────────────────────
+#  UI INTERACTION & SCROLLING (FR-02.4)
+# ─────────────────────────────────────────────
+
+async def _interact_with_ui(page: Page, deep_scan: bool):
+    """Click buttons, tabs, accordions to trigger JS routing or AJAX."""
+    if deep_scan:
+        # Click all buttons, links
+        selectors = "button, [role='button'], [role='tab'], .tab, .accordion"
+    else:
+        # Safe clicks
+        selectors = "[role='tab'], .tab, .accordion, [data-toggle], [data-target]"
+    
+    try:
+        elements = await page.query_selector_all(selectors)
+        for el in elements[:20]: # Cap to prevent infinite loops
+            if await el.is_visible():
+                await el.click(timeout=1000)
+                await asyncio.sleep(0.1)
+    except Exception:
+        pass
+
+async def _scroll_to_bottom(page: Page):
+    """Trigger lazy loading."""
+    try:
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(0.5)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────
 #  FORM DISCOVERY & SUBMISSION  (FR-02.3)
 # ─────────────────────────────────────────────
 
-async def _discover_and_submit_forms(page: Page, role: str, records: list[EndpointRecord]):
+async def _discover_and_submit_forms(page: Page, role: str, records: list[EndpointRecord], deep_scan: bool = False):
     """Find all forms on current page, record their structure, submit with safe values."""
     forms = await page.query_selector_all("form")
     for form in forms:
@@ -676,17 +763,24 @@ async def _discover_and_submit_forms(page: Page, role: str, records: list[Endpoi
 
             # Fill with safe default values (won't trigger destructive actions)
             for inp in inputs:
-                itype = (await inp.get_attribute("type") or "text").lower()
-                name  = await inp.get_attribute("name") or ""
-                if itype in ("text", "search", "url"):
-                    await inp.fill("test_value")
-                elif itype == "email":
-                    await inp.fill("test@example.com")
-                elif itype == "number":
-                    await inp.fill("1")
-                elif itype == "checkbox":
-                    await inp.check()
-                # Intentionally skip file inputs, submit, reset, hidden
+                try:
+                    tag_name = await inp.evaluate("el => el.tagName.toLowerCase()")
+                    if tag_name == "select":
+                        continue
+                        
+                    itype = (await inp.get_attribute("type") or "text").lower()
+                    name  = await inp.get_attribute("name") or ""
+                    if itype in ("text", "search", "url"):
+                        await inp.fill("test_value")
+                    elif itype == "email":
+                        await inp.fill("test@example.com")
+                    elif itype == "number":
+                        await inp.fill("1")
+                    elif itype == "checkbox":
+                        await inp.check()
+                    # Intentionally skip file inputs, submit, reset, hidden
+                except Exception as e:
+                    print(f"    [Form] Error filling input: {e}")
 
             # Record form structure before submitting
             fp = _fingerprint(action_url, method)
@@ -699,6 +793,12 @@ async def _discover_and_submit_forms(page: Page, role: str, records: list[Endpoi
                 schema_hash=fp,
             )
             records.append(rec)
+
+            if deep_scan:
+                submit_btn = await form.query_selector("button[type='submit'], input[type='submit']")
+                if submit_btn:
+                    await submit_btn.click(timeout=3000)
+                    await asyncio.sleep(1)
 
         except Exception as e:
             print(f"    [Form] Error processing form: {e}")
@@ -714,6 +814,7 @@ async def crawl_role(
     password: str,
     playwright_instance,
     all_role_results: dict,  # shared across roles for FR-02.6 comparison
+    deep_scan: bool = False
 ) -> CrawlResult:
 
     print(f"\n{'='*60}")
@@ -831,7 +932,11 @@ async def crawl_role(
             pass
 
         # Discover forms (FR-02.3)
-        await _discover_and_submit_forms(page, role, result.endpoints)
+        await _discover_and_submit_forms(page, role, result.endpoints, deep_scan)
+
+        # UI Interactions and scroll
+        await _interact_with_ui(page, deep_scan)
+        await _scroll_to_bottom(page)
 
         # Wait briefly for any AJAX triggered by form discovery
         await asyncio.sleep(0.5)
@@ -860,6 +965,17 @@ async def crawl_role(
     if extra_eps:
         result.endpoints.extend(extra_eps)
         print(f"    [+] Found {len(extra_eps)} endpoints from robots.txt")
+        
+    print(f"  [Discovery] Extracting API endpoints from {len(result.js_files)} JS files…")
+    js_eps = await _extract_js_endpoints(page, role, result.js_files)
+    if js_eps:
+        result.endpoints.extend(js_eps)
+        print(f"    [+] Found {len(js_eps)} endpoints from JS bundles")
+
+    # Step 5: Save storage state (FR-04.x)
+    state_path = OUTPUT_DIR / f"state_{role}.json"
+    await context.storage_state(path=state_path)
+    print(f"  [State] Saved Playwright storage state to {state_path}")
 
     await browser.close()
     print(f"\n  Role '{role}' done: {len(result.endpoints)} endpoints, "
@@ -1062,7 +1178,10 @@ async def main():
     config_path = Path("crawl_config.json")
     credentials = {}
     
-    if config_path.exists():
+    import sys
+    force_cli = "--interactive" in sys.argv
+    
+    if config_path.exists() and not force_cli:
         print(f"Reading configuration from {config_path}...")
         import json
         config_data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -1133,11 +1252,13 @@ async def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     all_results: list[CrawlResult] = []
 
+    deep_scan = "--deep-scan" in sys.argv
+
     async with async_playwright() as pw:
         all_role_results: dict = {}
 
         for role, (username, password) in credentials.items():
-            result = await crawl_role(role, username, password, pw, all_role_results)
+            result = await crawl_role(role, username, password, pw, all_role_results, deep_scan)
             all_results.append(result)
             all_role_results[role] = result
 

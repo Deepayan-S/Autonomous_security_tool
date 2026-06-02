@@ -105,6 +105,7 @@
         .vuln-confirmed .stat-value { color: var(--high); }
         .vuln-fp .stat-value { color: var(--low); }
         .vuln-manual .stat-value { color: var(--med); }
+        .vuln-info .stat-value { color: #3b82f6; }
 
         table {
             width: 100%;
@@ -195,11 +196,65 @@
                 <div class="stat-value">{{ report.summary.get("Requires Manual Review", 0) }}</div>
                 <div class="stat-label">Requires Manual Review</div>
             </div>
+            <div class="stat-box vuln-info">
+                <div class="stat-value">{{ report.summary.get("INFO: Anomaly", 0) }}</div>
+                <div class="stat-label">Info Anomalies</div>
+            </div>
             <div class="stat-box vuln-fp">
                 <div class="stat-value">{{ report.summary.get("Likely False Positive", 0) }}</div>
                 <div class="stat-label">False Positives Flagged</div>
             </div>
         </div>
+
+        <!-- Scan Metadata & Coverage -->
+        <h2>Scan Metadata & Coverage</h2>
+        <div class="card" style="display: flex; flex-wrap: wrap; gap: 40px;">
+            <div style="flex: 1; min-width: 300px;">
+                <h3 style="font-size: 1.1rem; color: var(--primary); margin-top: 0;">Metadata</h3>
+                <ul style="list-style: none; padding: 0; color: var(--text-muted); line-height: 2;">
+                    <li><strong>Target:</strong> {{ report.metadata.get("crawl_target", "Unknown") }}</li>
+                    <li><strong>Roles:</strong> {{ report.metadata.get("crawl_roles", "Unknown") }}</li>
+                    <li><strong>Data Freshness:</strong> {{ report.metadata.get("data_freshness", "Unknown") }}</li>
+                    <li><strong>Generated At:</strong> {{ report.metadata.get("crawl_generated", "Unknown") }}</li>
+                </ul>
+            </div>
+            <div style="flex: 1; min-width: 300px;">
+                <h3 style="font-size: 1.1rem; color: var(--primary); margin-top: 0;">Coverage Statistics</h3>
+                <ul style="list-style: none; padding: 0; color: var(--text-muted); line-height: 2;">
+                    <li><strong>Endpoints Crawled:</strong> {{ report.coverage_stats.endpoints_crawled }}</li>
+                    <li><strong>Endpoints Fuzzed:</strong> {{ report.coverage_stats.endpoints_fuzzed }}</li>
+                    <li><strong>Schemas Dropped:</strong> {{ report.coverage_stats.schemas_dropped }}</li>
+                </ul>
+            </div>
+        </div>
+        
+        {% if report.dropped_schemas %}
+        <details style="margin-bottom: 30px;">
+            <summary style="cursor: pointer; color: var(--primary); font-weight: bold; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">View Dropped Schemas ({{ report.dropped_schemas|length }})</summary>
+            <div class="card" style="margin-top: 15px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Method</th>
+                            <th>URL</th>
+                            <th>Role</th>
+                            <th>Reason Dropped</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ds in report.dropped_schemas %}
+                        <tr>
+                            <td><span class="method">{{ ds.method }}</span></td>
+                            <td><code>{{ ds.url }}</code></td>
+                            <td><span class="badge" style="background: var(--surface-hover); color: white;">{{ ds.role }}</span></td>
+                            <td>{{ ds.reason }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </details>
+        {% endif %}
 
         <!-- Coverage Matrix -->
         <div class="card">
@@ -262,6 +317,8 @@
                                     {% else %}
                                         <span class="badge cvss-low">CVSS {{ cvss }} (Low)</span>
                                     {% endif %}
+                                {% elif f.triage_status == "INFO: Anomaly" %}
+                                    <span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd;">INFO</span>
                                 {% else %}
                                     <span class="badge" style="background: rgba(255,255,255,0.1); color: var(--text-muted);">{{ f.triage_status }}</span>
                                 {% endif %}
