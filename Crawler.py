@@ -140,6 +140,8 @@ def _fingerprint(url: str, method: str) -> str:
     # Normalize query params: sort them, strip values (keep keys only for dedup)
     params = sorted(urllib.parse.parse_qs(parsed.query).keys())
     canonical = f"{method.upper()}:{parsed.scheme}://{parsed.netloc}{parsed.path}?{','.join(params)}"
+    if parsed.fragment:
+        canonical += f"#{parsed.fragment}"
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
@@ -176,8 +178,10 @@ def _in_scope(url: str, is_api: bool = False) -> bool:
 
 
 def _is_excluded(url: str) -> bool:
-    path = urllib.parse.urlparse(url).path
-    return any(path.startswith(ex) for ex in EXCLUDED_PATHS)
+    parsed = urllib.parse.urlparse(url)
+    path = parsed.path.lower()
+    fragment = parsed.fragment.lower()
+    return any(ex.lower() in path or ex.lower() in fragment for ex in EXCLUDED_PATHS)
 
 
 def _extract_jwt(value: str) -> Optional[str]:
@@ -311,12 +315,21 @@ async def _graphql_introspect(page: Page, role: str, gql_url: str) -> Optional[G
     try:
         result = await page.evaluate(f"""
         async () => {{
-            const resp = await fetch('{gql_url}', {{
-                method: 'POST',
-                headers: {{ 'Content-Type': 'application/json' }},
-                body: JSON.stringify({{ query: `{GRAPHQL_INTROSPECTION_QUERY}` }})
-            }});
-            return resp.json();
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            try {{
+                const resp = await fetch('{gql_url}', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ query: `{GRAPHQL_INTROSPECTION_QUERY}` }}),
+                    signal: controller.signal
+                }});
+                return resp.json();
+            }} catch (e) {{
+                return null;
+            }} finally {{
+                clearTimeout(timeoutId);
+            }}
         }}
         """)
 
@@ -356,9 +369,17 @@ async def _openapi_probe(page: Page, role: str, url: str) -> Optional[list[Endpo
     try:
         result = await page.evaluate(f"""
         async () => {{
-            const resp = await fetch('{url}');
-            if (!resp.ok) return null;
-            return resp.json();
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            try {{
+                const resp = await fetch('{url}', {{ signal: controller.signal }});
+                if (!resp.ok) return null;
+                return resp.json();
+            }} catch (e) {{
+                return null;
+            }} finally {{
+                clearTimeout(timeoutId);
+            }}
         }}
         """)
         
@@ -385,12 +406,21 @@ async def _probe_sitemap_and_robots(page: Page, role: str) -> list[EndpointRecor
     endpoints = []
     # Robots.txt
     try:
-        robots_url = urllib.parse.urljoin(TARGET_BASE_URL, "/robots.txt")
+        clean_base = urllib.parse.urlunparse(urllib.parse.urlparse(TARGET_BASE_URL)._replace(fragment=""))
+        robots_url = urllib.parse.urljoin(clean_base, "/robots.txt")
         result = await page.evaluate(f"""
         async () => {{
-            const resp = await fetch('{robots_url}');
-            if (!resp.ok) return null;
-            return resp.text();
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            try {{
+                const resp = await fetch('{robots_url}', {{ signal: controller.signal }});
+                if (!resp.ok) return null;
+                return resp.text();
+            }} catch (e) {{
+                return null;
+            }} finally {{
+                clearTimeout(timeoutId);
+            }}
         }}
         """)
         if result:
@@ -670,12 +700,14 @@ async def _extract_js_endpoints(page: Page, role: str, js_files: list) -> list[E
         r"fetch\(['\"]([^'\"]+)['\"]",
         r"axios\.(?:get|post|put|delete|patch|head|options)\(['\"]([^'\"]+)['\"]",
         r"(?:url|endpoint|api)\s*[:=]\s*['\"]([^'\"]+)['\"]",
-        r"\.ajax\(\{\s*url\s*:\s*['\"]([^'\"]+)['\"]"
+        r"\.ajax\(\{\s*url\s*:\s*['\"]([^'\"]+)['\"]",
+        r"['\"](/api/[^'\"]+)['\"]",
+        r"['\"](v\d+/[^'\"]+)['\"]"
     ]
     
     for url in js_files:
         try:
-            resp = await page.request.get(url)
+            resp = await page.request.get(url, timeout=10000)
             if not resp.ok:
                 continue
             text = await resp.text()
@@ -713,19 +745,17 @@ def _normalize_spa_url(url: str) -> str:
 
 async def _interact_with_ui(page: Page, deep_scan: bool):
     """Click buttons, tabs, accordions to trigger JS routing or AJAX."""
-    if deep_scan:
-        # Click all buttons, links
-        selectors = "button, [role='button'], [role='tab'], .tab, .accordion"
-    else:
-        # Safe clicks
-        selectors = "[role='tab'], .tab, .accordion, [data-toggle], [data-target]"
+    if "login" in page.url.lower():
+        return
+        
+    selectors = "button, [role='button'], [role='tab'], .tab, .accordion, [data-toggle], [data-target]"
     
     try:
         elements = await page.query_selector_all(selectors)
-        for el in elements[:20]: # Cap to prevent infinite loops
+        for el in elements[:30]: # Cap to prevent infinite loops
             if await el.is_visible():
                 await el.click(timeout=1000)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.5)
     except Exception:
         pass
 
@@ -751,7 +781,10 @@ async def _discover_and_submit_forms(page: Page, role: str, records: list[Endpoi
             method = (await form.get_attribute("method") or "GET").upper()
             action_url = urllib.parse.urljoin(page.url, action)
 
-            if not _in_scope(action_url) or _is_excluded(action_url):
+            if "login" in action_url.lower() or "login" in page.url.lower():
+                continue
+
+            if not _in_scope(action_url, is_api=True) or _is_excluded(action_url):
                 continue
 
             inputs = await form.query_selector_all("input, select, textarea")
@@ -794,11 +827,10 @@ async def _discover_and_submit_forms(page: Page, role: str, records: list[Endpoi
             )
             records.append(rec)
 
-            if deep_scan:
-                submit_btn = await form.query_selector("button[type='submit'], input[type='submit']")
-                if submit_btn:
-                    await submit_btn.click(timeout=3000)
-                    await asyncio.sleep(1)
+            submit_btn = await form.query_selector("button[type='submit'], input[type='submit']")
+            if submit_btn:
+                await submit_btn.click(timeout=3000)
+                await asyncio.sleep(1)
 
         except Exception as e:
             print(f"    [Form] Error processing form: {e}")
@@ -941,9 +973,14 @@ async def crawl_role(
         # Wait briefly for any AJAX triggered by form discovery
         await asyncio.sleep(0.5)
 
+    # Strip fragment for API probes
+    api_base = urllib.parse.urlunparse(urllib.parse.urlparse(TARGET_BASE_URL)._replace(fragment=""))
+    if api_base.endswith('/'):
+        api_base = api_base[:-1]
+
     # ── Step 3: GraphQL introspection (FR-02.5) ────────────────────
     for gql_path in GRAPHQL_PATHS:
-        gql_url = f"{TARGET_BASE_URL}{gql_path}"
+        gql_url = f"{api_base}{gql_path}"
         print(f"  [GraphQL] Probing {gql_url}…")
         gql_schema = await _graphql_introspect(page, role, gql_url)
         if gql_schema:
@@ -953,7 +990,7 @@ async def crawl_role(
 
     # ── Step 4: OpenAPI / Sitemap probing (NEW) ────────────────────
     for openapi_path in OPENAPI_PATHS:
-        openapi_url = urllib.parse.urljoin(TARGET_BASE_URL, openapi_path)
+        openapi_url = f"{api_base}{openapi_path}"
         print(f"  [OpenAPI] Probing {openapi_url}…")
         eps = await _openapi_probe(page, role, openapi_url)
         if eps:
