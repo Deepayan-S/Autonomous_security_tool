@@ -42,9 +42,8 @@ from typing import Optional
 # ─────────────────────────────────────────────
 
 DEFAULT_HOST    = "http://localhost:11434"
-DEFAULT_MODEL   = "valkyriesys/eudaimonia-dryad3-vision"
+DEFAULT_MODEL   = "qwen3.5:9b"
 DEFAULT_TIMEOUT = 300  # seconds — local models can be slow on first load
-
 
 # ─────────────────────────────────────────────
 #  EXCEPTIONS
