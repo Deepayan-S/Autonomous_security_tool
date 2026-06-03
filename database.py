@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS anomalies (
     status_code     INTEGER,
     response_hash   TEXT,
     baseline_delta  TEXT,
+    request_details TEXT,
+    response_details TEXT,
     flagged_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     triage_status   TEXT    DEFAULT 'pending',
     cvss_score      REAL,
@@ -129,6 +131,8 @@ CREATE TABLE IF NOT EXISTS passive_findings (
     cwe_id          TEXT,
     remediation     TEXT,
     role            TEXT,
+    request_details TEXT,
+    response_details TEXT,
     discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -361,8 +365,8 @@ class AHVFDatabase:
             """
             INSERT INTO anomalies
                 (endpoint_id, payload_id, status_code, response_hash,
-                 baseline_delta, triage_status)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 baseline_delta, request_details, response_details, triage_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 anomaly.get("endpoint_id"),
@@ -370,6 +374,8 @@ class AHVFDatabase:
                 anomaly.get("status_code"),
                 anomaly.get("response_hash"),
                 anomaly.get("baseline_delta"),
+                anomaly.get("request_details"),
+                anomaly.get("response_details"),
                 anomaly.get("triage_status", "pending"),
             ),
         )
@@ -405,8 +411,8 @@ class AHVFDatabase:
                 """
                 INSERT INTO passive_findings
                     (url, check_type, finding, severity, evidence,
-                     cwe_id, remediation, role)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     cwe_id, remediation, role, request_details, response_details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f.get("url", ""),
@@ -417,6 +423,8 @@ class AHVFDatabase:
                     f.get("cwe_id"),
                     f.get("remediation"),
                     f.get("role"),
+                    f.get("request_details"),
+                    f.get("response_details"),
                 ),
             )
             inserted += 1

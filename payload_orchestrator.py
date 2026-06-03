@@ -466,15 +466,30 @@ class PayloadOrchestrator:
                     return h
                 if target_param in schema.form_fields:
                     return h
+                
+                # Make parameter robust against LLM outputting ':id' instead of 'id'
+                clean_param = target_param.lstrip(':{').rstrip('}')
+                if f":{clean_param}" in schema.path or f"{{{clean_param}}}" in schema.path:
+                    return h
                 if target_param.startswith("path_seg_"):
                     # Basic bounds check if it's a valid path segment for this schema
                     try:
                         idx = int(target_param.split("_")[2])
                         path_parts = schema.path.strip("/").split("/")
-                        if idx < len(path_parts):
+                        # LLM is sometimes off-by-one or off-by-two, allow it if it's close
+                        if idx <= len(path_parts) + 2:
                             return h
                     except (IndexError, ValueError):
                         pass
+
+                # If the schema is a file upload and the LLM targeted "filename", allow it
+                if target_param.lower() == "filename" and schema.is_file_upload:
+                    return h
+
+                # If the target param loosely matches a context hint (like 'search')
+                for hint in schema.context_hints:
+                    if target_param.lower() in hint.lower():
+                        return h
         return None
 
     # -- Fallback Generation (Risk R-01) --------------------------

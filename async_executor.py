@@ -353,14 +353,14 @@ class AsyncPayloadExecutor:
             except Exception as e:
                 logger.warning(f"[BASELINE] Failed for {task['url']}: {e}")
 
-    async def _log_anomaly(self, endpoint_id: int, payload_id: int, status_code: int, response_body: str, delta: str):
+    async def _log_anomaly(self, endpoint_id: int, payload_id: int, status_code: int, response_body: str, delta: str, req_details: str = "", resp_details: str = ""):
         """Logs anomalous responses to SQLite (FR-06.8)"""
         resp_hash = BaselineDeltaChecker.get_body_hash(response_body)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("""
-                INSERT INTO anomalies (endpoint_id, payload_id, status_code, response_hash, baseline_delta)
-                VALUES (?, ?, ?, ?, ?)
-            """, (endpoint_id, payload_id, status_code, resp_hash, delta))
+                INSERT INTO anomalies (endpoint_id, payload_id, status_code, response_hash, baseline_delta, request_details, response_details)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (endpoint_id, payload_id, status_code, resp_hash, delta, req_details, resp_details))
             await db.commit()
 
     def _set_nested_value(self, obj, target: str, value):
@@ -388,8 +388,8 @@ class AsyncPayloadExecutor:
                 if idx < len(current):
                     current[idx] = value
 
-    def _inject_payload(self, task: dict) -> dict:
-        """Injects the payload into the target parameter."""
+    def _inject_payload(self, task: dict) -> tuple[bool, dict]:
+        """Injects the payload into the target parameter. Returns (success, injected_kwargs)."""
         target = task["target_param"]
         payload = task["payload"]
         injected_kwargs = {}
@@ -411,9 +411,12 @@ class AsyncPayloadExecutor:
                     path_parts[seg_index] = str(payload)
                     new_path = "/" + "/".join(path_parts)
                     task["url"] = urllib.parse.urlunparse(parsed._replace(path=new_path))
+                    return True, injected_kwargs
+                else:
+                    # Out of bounds injection fails
+                    return False, injected_kwargs
             except (ValueError, IndexError):
-                pass
-            return injected_kwargs
+                return False, injected_kwargs
 
         # 2. Body / Query injection
         if task["method"].upper() in ["POST", "PUT", "PATCH"]:
@@ -429,7 +432,7 @@ class AsyncPayloadExecutor:
         else:
             injected_kwargs["params"] = {target: payload}
             
-        return injected_kwargs
+        return True, injected_kwargs
 
     async def execute_task(self, session: aiohttp.ClientSession, task: dict):
         async with self.semaphore:
@@ -452,7 +455,10 @@ class AsyncPayloadExecutor:
                     cookies.update(state_cookies)
 
                 # Injection (FR-06.2)
-                inject_kwargs = self._inject_payload(task)
+                success, inject_kwargs = self._inject_payload(task)
+                if not success:
+                    # Injection failed (e.g. out of bounds path segment), skip execution
+                    return
 
                 # Execution (FR-06.1 & FR-06.4 & FR-06.7)
                 # Note: aiohttp does not natively support HTTP/2. We proceed with HTTP/1.1 
@@ -483,12 +489,36 @@ class AsyncPayloadExecutor:
                 
                 if checker_result["is_anomaly"]:
                     logger.info(f"[ANOMALY] Detected on {task['url']} (Status: {resp.status})")
+                    
+                    req_details_lines = [f"{task['method']} {resp.request_info.url} HTTP/1.1"]
+                    for k, v in resp.request_info.headers.items():
+                        req_details_lines.append(f"{k}: {v}")
+                    req_details_lines.append("")
+                    req_body = inject_kwargs.get("data") or inject_kwargs.get("json")
+                    if req_body:
+                        if isinstance(req_body, (dict, list)):
+                            req_details_lines.append(json.dumps(req_body, indent=2))
+                        else:
+                            req_details_lines.append(str(req_body))
+                    request_details_str = "\n".join(req_details_lines)
+
+                    resp_details_lines = [f"HTTP/1.1 {resp.status} {resp.reason}"]
+                    for k, v in resp.headers.items():
+                        resp_details_lines.append(f"{k}: {v}")
+                    resp_details_lines.append("")
+                    resp_details_lines.append(resp_body[:10000])
+                    if len(resp_body) > 10000:
+                        resp_details_lines.append("\n...[TRUNCATED]")
+                    response_details_str = "\n".join(resp_details_lines)
+
                     await self._log_anomaly(
                         task["endpoint_id"], 
                         task["payload_id"], 
                         resp.status, 
                         resp_body, 
-                        checker_result["delta_summary"]
+                        checker_result["delta_summary"],
+                        request_details_str,
+                        response_details_str
                     )
             except Exception as e:
                 logger.error(f"Task failed for {task['url']}: {e}")

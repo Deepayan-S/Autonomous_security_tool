@@ -315,6 +315,7 @@ Output MUST be a valid JSON array."""
         # 1. Fetch all triaged anomalies
         cursor = self.db.execute("""
             SELECT a.id, a.status_code, a.baseline_delta, a.triage_status, a.cvss_score, a.cwe_id, a.llm_details,
+                   a.request_details, a.response_details,
                    e.url, e.method, e.role, p.payload, p.target_param, p.vuln_class
             FROM anomalies a
             JOIN endpoints e ON a.endpoint_id = e.id

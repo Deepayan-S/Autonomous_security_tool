@@ -214,23 +214,40 @@ class PassiveAnalyzer:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=10), allow_redirects=False) as resp:
                 resp_headers = {k.lower(): v for k, v in resp.headers.items()}
                 status = resp.status
+                
+                req_lines = [f"{resp.request_info.method} {resp.request_info.url} HTTP/1.1"]
+                for k, v in resp.request_info.headers.items():
+                    req_lines.append(f"{k}: {v}")
+                req_lines.append("")
+                req_details = "\n".join(req_lines)
+                
+                body = ""
+                try:
+                    body = await resp.text(errors="replace")
+                except:
+                    pass
+                
+                resp_lines = [f"HTTP/1.1 {status} {resp.reason}"]
+                for k, v in resp.headers.items():
+                    resp_lines.append(f"{k}: {v}")
+                resp_lines.append("")
+                resp_lines.append(body[:2000])
+                if len(body) > 2000:
+                    resp_lines.append("\n...[TRUNCATED]")
+                resp_details = "\n".join(resp_lines)
 
                 # 1. Security header audit
-                self._check_security_headers(url, resp_headers, role)
+                self._check_security_headers(url, resp_headers, role, req_details, resp_details)
 
                 # 2. Information disclosure
-                self._check_info_disclosure(url, resp_headers, role)
+                self._check_info_disclosure(url, resp_headers, role, req_details, resp_details)
 
                 # 3. Cache control on auth endpoints
-                self._check_cache_control(url, resp_headers, role)
+                self._check_cache_control(url, resp_headers, role, req_details, resp_details)
 
                 # 4. Check response body for stack traces (only on error pages)
-                if status >= 400:
-                    try:
-                        body = await resp.text(errors="replace")
-                        self._check_error_disclosure(url, body, status, role)
-                    except Exception:
-                        pass
+                if status >= 400 and body:
+                    self._check_error_disclosure(url, body, status, role, req_details, resp_details)
 
         except Exception as e:
             logger.debug(f"Failed to analyze {url}: {e}")
@@ -239,7 +256,7 @@ class PassiveAnalyzer:
         # 5. CORS check (separate request with Origin header)
         await self._check_cors(session, url, role)
 
-    def _check_security_headers(self, url: str, headers: dict, role: str) -> None:
+    def _check_security_headers(self, url: str, headers: dict, role: str, req_details: str = "", resp_details: str = "") -> None:
         """Check for missing or misconfigured security headers."""
         for hdef in REQUIRED_HEADERS:
             header_name = hdef["header"]
@@ -255,6 +272,8 @@ class PassiveAnalyzer:
                     "cwe_id": hdef["cwe_id"],
                     "remediation": hdef["remediation"],
                     "role": role,
+                    "request_details": req_details,
+                    "response_details": resp_details,
                 })
             elif not hdef["check"](value) and hdef.get("finding_weak"):
                 self.findings.append({
@@ -266,9 +285,11 @@ class PassiveAnalyzer:
                     "cwe_id": hdef["cwe_id"],
                     "remediation": hdef["remediation"],
                     "role": role,
+                    "request_details": req_details,
+                    "response_details": resp_details,
                 })
 
-    def _check_info_disclosure(self, url: str, headers: dict, role: str) -> None:
+    def _check_info_disclosure(self, url: str, headers: dict, role: str, req_details: str = "", resp_details: str = "") -> None:
         """Check for server version strings and debug headers."""
         for header_name in INFO_DISCLOSURE_HEADERS:
             value = headers.get(header_name)
@@ -290,9 +311,11 @@ class PassiveAnalyzer:
                     "cwe_id": "CWE-200",
                     "remediation": f"Remove or suppress the '{header_name}' header in production.",
                     "role": role,
+                    "request_details": req_details,
+                    "response_details": resp_details,
                 })
 
-    def _check_cache_control(self, url: str, headers: dict, role: str) -> None:
+    def _check_cache_control(self, url: str, headers: dict, role: str, req_details: str = "", resp_details: str = "") -> None:
         """Check that sensitive endpoints have no-store cache control."""
         # Only check auth-related endpoints
         sensitive_keywords = ["auth", "login", "user", "account", "profile", "token", "session", "password"]
@@ -312,9 +335,11 @@ class PassiveAnalyzer:
                 "cwe_id": "CWE-525",
                 "remediation": "Add 'Cache-Control: no-store, no-cache, must-revalidate' to sensitive endpoints.",
                 "role": role,
+                "request_details": req_details,
+                "response_details": resp_details,
             })
 
-    def _check_error_disclosure(self, url: str, body: str, status: int, role: str) -> None:
+    def _check_error_disclosure(self, url: str, body: str, status: int, role: str, req_details: str = "", resp_details: str = "") -> None:
         """Check error responses for stack traces and verbose errors."""
         stack_trace_patterns = [
             r"Traceback \(most recent call last\)",  # Python
@@ -342,6 +367,8 @@ class PassiveAnalyzer:
                     "cwe_id": "CWE-209",
                     "remediation": "Implement custom error pages. Never expose stack traces in production.",
                     "role": role,
+                    "request_details": req_details,
+                    "response_details": resp_details,
                 })
                 break  # One finding per URL is enough
 
@@ -366,6 +393,18 @@ class PassiveAnalyzer:
 
                     if not acao:
                         continue  # No CORS headers = not vulnerable
+                        
+                    req_lines = [f"{resp.request_info.method} {resp.request_info.url} HTTP/1.1"]
+                    for k, v in resp.request_info.headers.items():
+                        req_lines.append(f"{k}: {v}")
+                    req_lines.append("")
+                    req_details = "\n".join(req_lines)
+                    
+                    resp_lines = [f"HTTP/1.1 {resp.status} {resp.reason}"]
+                    for k, v in resp.headers.items():
+                        resp_lines.append(f"{k}: {v}")
+                    resp_lines.append("")
+                    resp_details = "\n".join(resp_lines)
 
                     # Check if origin is reflected
                     is_reflected = (acao == origin) or (acao == "*")
@@ -382,6 +421,8 @@ class PassiveAnalyzer:
                                 "cwe_id": "CWE-942",
                                 "remediation": "Never reflect arbitrary origins with Allow-Credentials. Use a strict allowlist.",
                                 "role": role,
+                                "request_details": req_details,
+                                "response_details": resp_details,
                             })
                         elif acao == "*":
                             self.findings.append({
@@ -393,6 +434,8 @@ class PassiveAnalyzer:
                                 "cwe_id": "CWE-942",
                                 "remediation": "Replace wildcard with a specific origin allowlist.",
                                 "role": role,
+                                "request_details": req_details,
+                                "response_details": resp_details,
                             })
                         else:
                             self.findings.append({
@@ -404,6 +447,8 @@ class PassiveAnalyzer:
                                 "cwe_id": "CWE-942",
                                 "remediation": "Do not reflect arbitrary Origin values. Use a strict allowlist.",
                                 "role": role,
+                                "request_details": req_details,
+                                "response_details": resp_details,
                             })
 
             except Exception:
