@@ -71,7 +71,13 @@
             box-shadow: var(--shadow-sm);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
+        }
+
+        /* Wide card for large tables — allows horizontal scroll */
+        .card-wide {
+            overflow-x: auto;
+            max-width: 100%;
         }
 
         .card:hover {
@@ -176,6 +182,27 @@
             border-collapse: collapse;
             margin-top: 10px;
             font-size: 0.9rem;
+        }
+
+        /* Passive findings table: content-greedy, no truncation */
+        #passive-findings-table {
+            table-layout: auto;
+            min-width: 900px;
+        }
+
+        #passive-findings-table td,
+        #passive-findings-table th {
+            white-space: normal;
+            word-break: normal;
+            overflow-wrap: break-word;
+        }
+
+        /* Remediation column gets maximum breathing room */
+        #passive-findings-table td:last-child {
+            min-width: 280px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.55;
         }
 
         th, td {
@@ -541,6 +568,26 @@
                             <strong>Evidence (Status {{ f.status_code }}):</strong>
                             <pre style="margin-top: 5px; padding: 10px;">{{ f.baseline_delta }}</pre>
                         </div>
+
+                        {% if f.request_details or f.response_details %}
+                        <details style="margin-top: 15px;">
+                            <summary style="font-size: 0.9rem;">View Request / Response Details</summary>
+                            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 15px;">
+                                {% if f.request_details %}
+                                <div>
+                                    <strong style="font-size: 0.85rem; color: var(--text-muted);">HTTP Request:</strong>
+                                    <pre style="margin-top: 5px; padding: 10px; max-height: 300px; overflow-y: auto;">{{ f.request_details | e }}</pre>
+                                </div>
+                                {% endif %}
+                                {% if f.response_details %}
+                                <div>
+                                    <strong style="font-size: 0.85rem; color: var(--text-muted);">HTTP Response (Truncated):</strong>
+                                    <pre style="margin-top: 5px; padding: 10px; max-height: 400px; overflow-y: auto;">{{ f.response_details | e }}</pre>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </details>
+                        {% endif %}
                         
                         {% if f.llm_details and f.triage_status == "Confirmed Vulnerability" %}
                         <div style="margin-top: 15px; padding: 15px; background: var(--primary-light); border-radius: 8px; border: 1px solid rgba(80, 70, 229, 0.15);">
@@ -601,7 +648,7 @@
             <div class="filter-count" id="filter-count"></div>
         </div>
 
-        <div class="card">
+        <div class="card card-wide">
             <table id="passive-findings-table">
                 <thead>
                     <tr>
@@ -628,10 +675,31 @@
                                 <span class="badge cvss-low">{{ pf.severity }}</span>
                             {% endif %}
                         </td>
-                        <td>{{ pf.finding }}</td>
+                        <td>
+                            {{ pf.finding }}
+                            {% if pf.request_details or pf.response_details %}
+                            <details style="margin-top: 10px;">
+                                <summary style="font-size: 0.8rem; color: var(--primary);">View Request/Response</summary>
+                                <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+                                    {% if pf.request_details %}
+                                    <div>
+                                        <strong style="font-size: 0.8rem; color: var(--text-muted);">Request:</strong>
+                                        <pre style="margin-top: 5px; padding: 10px; font-size: 0.75rem; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid var(--border);">{{ pf.request_details | e }}</pre>
+                                    </div>
+                                    {% endif %}
+                                    {% if pf.response_details %}
+                                    <div>
+                                        <strong style="font-size: 0.8rem; color: var(--text-muted);">Response (Truncated):</strong>
+                                        <pre style="margin-top: 5px; padding: 10px; font-size: 0.75rem; max-height: 250px; overflow-y: auto; background: #fff; border: 1px solid var(--border);">{{ pf.response_details | e }}</pre>
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </details>
+                            {% endif %}
+                        </td>
                         <td><code>{{ pf.url[:80] }}{% if pf.url|length > 80 %}…{% endif %}</code></td>
                         <td>{{ pf.cwe_id or '' }}</td>
-                        <td style="font-size: 0.85rem; color: var(--text-muted);">{{ pf.remediation or '' }}</td>
+                        <td>{{ pf.remediation or '' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
