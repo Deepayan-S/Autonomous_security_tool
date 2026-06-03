@@ -522,8 +522,9 @@ class AsyncPayloadExecutor:
             logger.info("No valid tasks to execute.")
             return
         
-        # We use a single session for connection pooling
-        async with aiohttp.ClientSession() as session:
+        # We use a single session for connection pooling with a 15-second timeout
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             # Phase 1: Collect baselines for all unique endpoints
             await self._collect_baselines(session, tasks)
 
