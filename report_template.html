@@ -7,17 +7,26 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #0f111a;
-            --surface: #1a1d2d;
-            --surface-hover: #23273b;
-            --primary: #6366f1;
-            --primary-glow: rgba(99, 102, 241, 0.4);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --high: #ef4444;
-            --med: #f59e0b;
-            --low: #10b981;
-            --border: rgba(255,255,255,0.05);
+            --bg: #f4f6fb;
+            --surface: #ffffff;
+            --surface-hover: #eef1f8;
+            --primary: #5046e5;
+            --primary-light: #ede9fe;
+            --primary-glow: rgba(80, 70, 229, 0.15);
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --high: #dc2626;
+            --high-bg: rgba(220, 38, 38, 0.08);
+            --med: #d97706;
+            --med-bg: rgba(217, 119, 6, 0.08);
+            --low: #059669;
+            --low-bg: rgba(5, 150, 105, 0.08);
+            --info-color: #2563eb;
+            --info-bg: rgba(37, 99, 235, 0.08);
+            --border: rgba(0, 0, 0, 0.07);
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,0.08), 0 4px 10px rgba(0,0,0,0.04);
         }
 
         body {
@@ -42,10 +51,15 @@
 
         h1 {
             font-size: 3rem;
-            background: linear-gradient(to right, #818cf8, #c084fc);
+            background: linear-gradient(135deg, #5046e5, #7c3aed, #a855f7);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             display: inline-block;
+        }
+
+        h2 {
+            color: #334155;
+            font-size: 1.5rem;
         }
 
         .card {
@@ -54,68 +68,118 @@
             border-radius: 16px;
             padding: 30px;
             margin-bottom: 30px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: var(--shadow-sm);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
             position: relative;
             overflow: hidden;
         }
 
         .card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.2), 0 0 15px var(--primary-glow);
+            box-shadow: var(--shadow-lg);
         }
 
-        /* Glassmorphism accent */
+        /* Accent top bar */
         .card::before {
             content: '';
             position: absolute;
-            top: 0; left: 0; right: 0; height: 2px;
+            top: 0; left: 0; right: 0; height: 3px;
             background: linear-gradient(90deg, transparent, var(--primary), transparent);
-            opacity: 0.5;
+            opacity: 0.4;
         }
 
         .grid-3 {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
             margin-bottom: 40px;
         }
 
-        .stat-box {
+        /* ── Executive Summary Buttons ── */
+        .stat-btn {
+            display: block;
             text-align: center;
-            padding: 30px;
-            border-radius: 12px;
-            background: rgba(255,255,255,0.02);
+            padding: 28px 20px;
+            border-radius: 14px;
             border: 1px solid var(--border);
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.25s ease;
+            position: relative;
+            overflow: hidden;
         }
 
-        .stat-value {
-            font-size: 3rem;
+        .stat-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-btn:active {
+            transform: translateY(0);
+        }
+
+        .stat-btn .stat-value {
+            font-size: 2.8rem;
             font-weight: 800;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
+            line-height: 1;
         }
 
-        .stat-label {
+        .stat-btn .stat-label {
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.1em;
-            font-size: 0.85rem;
+            letter-spacing: 0.08em;
+            font-size: 0.8rem;
+            font-weight: 600;
         }
 
-        .vuln-confirmed .stat-value { color: var(--high); }
-        .vuln-fp .stat-value { color: var(--low); }
-        .vuln-manual .stat-value { color: var(--med); }
-        .vuln-info .stat-value { color: #3b82f6; }
+        .stat-btn .stat-arrow {
+            display: inline-block;
+            margin-top: 10px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            opacity: 0;
+            transform: translateY(4px);
+            transition: all 0.25s ease;
+        }
 
+        .stat-btn:hover .stat-arrow {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .vuln-confirmed { background: var(--high-bg); }
+        .vuln-confirmed .stat-value { color: var(--high); }
+        .vuln-confirmed .stat-arrow { color: var(--high); }
+        .vuln-confirmed:hover { border-color: rgba(220, 38, 38, 0.3); }
+
+        .vuln-manual { background: var(--med-bg); }
+        .vuln-manual .stat-value { color: var(--med); }
+        .vuln-manual .stat-arrow { color: var(--med); }
+        .vuln-manual:hover { border-color: rgba(217, 119, 6, 0.3); }
+
+        .vuln-info { background: var(--info-bg); }
+        .vuln-info .stat-value { color: var(--info-color); }
+        .vuln-info .stat-arrow { color: var(--info-color); }
+        .vuln-info:hover { border-color: rgba(37, 99, 235, 0.3); }
+
+        .vuln-fp { background: var(--low-bg); }
+        .vuln-fp .stat-value { color: var(--low); }
+        .vuln-fp .stat-arrow { color: var(--low); }
+        .vuln-fp:hover { border-color: rgba(5, 150, 105, 0.3); }
+
+        /* ── Tables ── */
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 10px;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         th, td {
-            padding: 15px;
+            padding: 14px 16px;
             text-align: left;
             border-bottom: 1px solid var(--border);
         }
@@ -124,47 +188,52 @@
             color: var(--text-muted);
             font-weight: 600;
             text-transform: uppercase;
-            font-size: 0.8rem;
-            letter-spacing: 0.05em;
+            font-size: 0.75rem;
+            letter-spacing: 0.06em;
+            background: #f8fafc;
         }
 
         tr:hover td {
-            background: rgba(255,255,255,0.02);
+            background: rgba(80, 70, 229, 0.02);
         }
 
+        /* ── Badges ── */
         .badge {
             display: inline-block;
             padding: 4px 10px;
             border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 800;
+            font-size: 0.72rem;
+            font-weight: 700;
             text-transform: uppercase;
+            letter-spacing: 0.02em;
         }
 
-        .cvss-high { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
-        .cvss-med { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
-        .cvss-low { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+        .cvss-high { background: rgba(220, 38, 38, 0.1); color: #b91c1c; }
+        .cvss-med { background: rgba(217, 119, 6, 0.1); color: #92400e; }
+        .cvss-low { background: rgba(5, 150, 105, 0.1); color: #065f46; }
 
+        /* ── Code ── */
         code, pre {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             border-radius: 6px;
         }
 
         code {
-            background: rgba(0,0,0,0.3);
-            padding: 2px 6px;
-            color: #a5b4fc;
+            background: #f1f5f9;
+            padding: 2px 7px;
+            color: #4338ca;
         }
 
         pre {
-            background: rgba(0,0,0,0.3);
+            background: #f8fafc;
             padding: 15px;
             overflow-x: auto;
             border: 1px solid var(--border);
-            color: #e2e8f0;
+            color: #334155;
         }
 
+        /* ── Finding Header ── */
         .finding-header {
             display: flex;
             justify-content: space-between;
@@ -173,10 +242,142 @@
             padding-bottom: 15px;
             margin-bottom: 15px;
         }
-        
+
         .method {
             color: var(--primary);
             font-weight: bold;
+        }
+
+        /* ── Collapsible Sections ── */
+        details {
+            margin-bottom: 16px;
+        }
+
+        details > summary {
+            cursor: pointer;
+            font-weight: 600;
+            padding: 12px 18px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--primary);
+            transition: all 0.2s ease;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        details > summary::-webkit-details-marker { display: none; }
+
+        details > summary::before {
+            content: '▶';
+            font-size: 0.65rem;
+            transition: transform 0.2s ease;
+            display: inline-block;
+        }
+
+        details[open] > summary::before {
+            transform: rotate(90deg);
+        }
+
+        details > summary:hover {
+            background: var(--primary-light);
+            border-color: rgba(80, 70, 229, 0.3);
+        }
+
+        /* ── Passive Findings Filter Bar ── */
+        .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: flex-end;
+            padding: 18px 22px;
+            margin-bottom: 20px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .filter-group label {
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }
+
+        .filter-group select {
+            padding: 8px 32px 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            color: var(--text-main);
+            background: white;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            min-width: 160px;
+            transition: border-color 0.2s ease;
+        }
+
+        .filter-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .filter-reset-btn {
+            padding: 8px 18px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: white;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-reset-btn:hover {
+            color: var(--primary);
+            border-color: var(--primary);
+            background: var(--primary-light);
+        }
+
+        .filter-count {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            padding-bottom: 8px;
+        }
+
+        /* Row hidden by filter */
+        .pf-row-hidden {
+            display: none !important;
+        }
+
+        /* ── Smooth scroll ── */
+        html {
+            scroll-behavior: smooth;
+        }
+
+        /* ── Print-friendly ── */
+        @media print {
+            body { padding: 20px; background: white; }
+            .stat-btn:hover { transform: none; box-shadow: none; }
+            .card:hover { transform: none; box-shadow: none; }
+            .filter-bar { display: none; }
         }
     </style>
 </head>
@@ -188,26 +389,30 @@
         <!-- Executive Summary -->
         <h2>Executive Summary</h2>
         <div class="grid-3">
-            <div class="stat-box vuln-confirmed">
+            <a href="#section-detailed-findings" class="stat-btn vuln-confirmed">
                 <div class="stat-value">{{ report.summary.get("Confirmed Vulnerability", 0) }}</div>
                 <div class="stat-label">Confirmed Vulnerabilities</div>
-            </div>
-            <div class="stat-box vuln-manual">
+                <div class="stat-arrow">↓ View Findings</div>
+            </a>
+            <a href="#section-detailed-findings" class="stat-btn vuln-manual">
                 <div class="stat-value">{{ report.summary.get("Requires Manual Review", 0) }}</div>
                 <div class="stat-label">Requires Manual Review</div>
-            </div>
-            <div class="stat-box vuln-info">
+                <div class="stat-arrow">↓ View Findings</div>
+            </a>
+            <a href="#section-detailed-findings" class="stat-btn vuln-info">
                 <div class="stat-value">{{ report.summary.get("INFO: Anomaly", 0) }}</div>
                 <div class="stat-label">Info Anomalies</div>
-            </div>
-            <div class="stat-box vuln-fp">
+                <div class="stat-arrow">↓ View Findings</div>
+            </a>
+            <a href="#section-passive-findings" class="stat-btn vuln-fp">
                 <div class="stat-value">{{ report.summary.get("Likely False Positive", 0) }}</div>
                 <div class="stat-label">False Positives Flagged</div>
-            </div>
+                <div class="stat-arrow">↓ View Details</div>
+            </a>
         </div>
 
         <!-- Scan Metadata & Coverage -->
-        <h2>Scan Metadata & Coverage</h2>
+        <h2>Scan Metadata &amp; Coverage</h2>
         <div class="card" style="display: flex; flex-wrap: wrap; gap: 40px;">
             <div style="flex: 1; min-width: 300px;">
                 <h3 style="font-size: 1.1rem; color: var(--primary); margin-top: 0;">Metadata</h3>
@@ -230,7 +435,7 @@
         
         {% if report.dropped_schemas %}
         <details style="margin-bottom: 30px;">
-            <summary style="cursor: pointer; color: var(--primary); font-weight: bold; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">View Dropped Schemas ({{ report.dropped_schemas|length }})</summary>
+            <summary>View Dropped Schemas ({{ report.dropped_schemas|length }})</summary>
             <div class="card" style="margin-top: 15px;">
                 <table>
                     <thead>
@@ -246,7 +451,7 @@
                         <tr>
                             <td><span class="method">{{ ds.method }}</span></td>
                             <td><code>{{ ds.url }}</code></td>
-                            <td><span class="badge" style="background: var(--surface-hover); color: white;">{{ ds.role }}</span></td>
+                            <td><span class="badge" style="background: var(--surface-hover); color: var(--text-main);">{{ ds.role }}</span></td>
                             <td>{{ ds.reason }}</td>
                         </tr>
                         {% endfor %}
@@ -256,34 +461,36 @@
         </details>
         {% endif %}
 
-        <!-- Coverage Matrix -->
-        <div class="card">
-            <h2>Scan Coverage Matrix</h2>
-            <p style="color: var(--text-muted);">Details the cross-section of tested roles and payload classes.</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Endpoint</th>
-                        <th>Role</th>
-                        <th>Vulnerability Class</th>
-                        <th>Payloads Executed</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for cov in report.coverage %}
-                    <tr>
-                        <td><code>{{ cov.url }}</code></td>
-                        <td><span class="badge" style="background: var(--surface-hover); color: white;">{{ cov.role }}</span></td>
-                        <td>{{ cov.vuln_class }}</td>
-                        <td>{{ cov.payload_count }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <!-- Coverage Matrix (Collapsible Dropdown) -->
+        <details id="section-coverage-matrix">
+            <summary>Scan Coverage Matrix ({{ report.coverage|length }} entries)</summary>
+            <div class="card" style="margin-top: 15px;">
+                <p style="color: var(--text-muted); margin-top: 0;">Details the cross-section of tested roles and payload classes.</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Endpoint</th>
+                            <th>Role</th>
+                            <th>Vulnerability Class</th>
+                            <th>Payloads Executed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cov in report.coverage %}
+                        <tr>
+                            <td><code>{{ cov.url }}</code></td>
+                            <td><span class="badge" style="background: var(--surface-hover); color: var(--text-main);">{{ cov.role }}</span></td>
+                            <td>{{ cov.vuln_class }}</td>
+                            <td>{{ cov.payload_count }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </details>
 
         <!-- Detailed Findings -->
-        <h2>Detailed Findings</h2>
+        <h2 id="section-detailed-findings">Detailed Findings</h2>
         {% for vuln_class, findings in report.grouped_findings.items() %}
         <div class="card">
             <div class="finding-header">
@@ -295,11 +502,11 @@
             </div>
             
             <details style="margin-top: 20px;">
-                <summary style="cursor: pointer; color: var(--primary); font-weight: bold; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">View Affected Endpoints</summary>
+                <summary>View Affected Endpoints</summary>
                 
                 <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 20px;">
                     {% for f in findings %}
-                    <div style="padding: 15px; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.2);">
+                    <div style="padding: 15px; border: 1px solid var(--border); border-radius: 8px; background: #fafbfe;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                             <div>
                                 <strong><span class="method">{{ f.method }}</span> {{ f.url }}</strong>
@@ -318,9 +525,9 @@
                                         <span class="badge cvss-low">CVSS {{ cvss }} (Low)</span>
                                     {% endif %}
                                 {% elif f.triage_status == "INFO: Anomaly" %}
-                                    <span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd;">INFO</span>
+                                    <span class="badge" style="background: rgba(37, 99, 235, 0.1); color: #1e40af;">INFO</span>
                                 {% else %}
-                                    <span class="badge" style="background: rgba(255,255,255,0.1); color: var(--text-muted);">{{ f.triage_status }}</span>
+                                    <span class="badge" style="background: rgba(0,0,0,0.05); color: var(--text-muted);">{{ f.triage_status }}</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -336,8 +543,8 @@
                         </div>
                         
                         {% if f.llm_details and f.triage_status == "Confirmed Vulnerability" %}
-                        <div style="margin-top: 15px; padding: 15px; background: rgba(99, 102, 241, 0.05); border-radius: 8px; border: 1px solid rgba(99, 102, 241, 0.2);">
-                            <h4 style="margin-top: 0; color: var(--primary); font-size: 0.95rem;">🤖 LLM Analysis & Remediation</h4>
+                        <div style="margin-top: 15px; padding: 15px; background: var(--primary-light); border-radius: 8px; border: 1px solid rgba(80, 70, 229, 0.15);">
+                            <h4 style="margin-top: 0; color: var(--primary); font-size: 0.95rem;">🤖 LLM Analysis &amp; Remediation</h4>
                             
                             {% if f.llm_details.cve_cwe_mapping %}
                             <p style="margin: 5px 0; font-size: 0.9rem;"><strong>CWE:</strong> {{ f.llm_details.cve_cwe_mapping }}</p>
@@ -368,9 +575,34 @@
 
         <!-- Passive Security Findings -->
         {% if report.passive_findings %}
-        <h2>Passive Security Findings</h2>
+        <h2 id="section-passive-findings">Passive Security Findings</h2>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar" id="passive-filter-bar">
+            <div class="filter-group">
+                <label for="filter-type">Type</label>
+                <select id="filter-type" onchange="applyPassiveFilters()">
+                    <option value="">All Types</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-severity">Severity</label>
+                <select id="filter-severity" onchange="applyPassiveFilters()">
+                    <option value="">All Severities</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-cwe">CWE</label>
+                <select id="filter-cwe" onchange="applyPassiveFilters()">
+                    <option value="">All CWEs</option>
+                </select>
+            </div>
+            <button class="filter-reset-btn" onclick="resetPassiveFilters()">Reset</button>
+            <div class="filter-count" id="filter-count"></div>
+        </div>
+
         <div class="card">
-            <table>
+            <table id="passive-findings-table">
                 <thead>
                     <tr>
                         <th>Type</th>
@@ -383,8 +615,8 @@
                 </thead>
                 <tbody>
                     {% for pf in report.passive_findings %}
-                    <tr>
-                        <td><span class="badge" style="background: var(--surface-hover); color: white;">{{ pf.check_type }}</span></td>
+                    <tr data-type="{{ pf.check_type }}" data-severity="{{ pf.severity }}" data-cwe="{{ pf.cwe_id or '' }}">
+                        <td><span class="badge" style="background: var(--surface-hover); color: var(--text-main);">{{ pf.check_type }}</span></td>
                         <td>
                             {% if pf.severity == "Critical" %}
                                 <span class="badge cvss-high">Critical</span>
@@ -405,6 +637,83 @@
                 </tbody>
             </table>
         </div>
+
+        <script>
+        (function() {
+            // ── Build filter dropdown options from table data ──
+            const table = document.getElementById('passive-findings-table');
+            const rows = table.querySelectorAll('tbody tr');
+            const typeSet = new Set(), sevSet = new Set(), cweSet = new Set();
+
+            rows.forEach(row => {
+                const t = row.getAttribute('data-type');
+                const s = row.getAttribute('data-severity');
+                const c = row.getAttribute('data-cwe');
+                if (t) typeSet.add(t);
+                if (s) sevSet.add(s);
+                if (c) cweSet.add(c);
+            });
+
+            function populateSelect(id, values) {
+                const sel = document.getElementById(id);
+                const sorted = Array.from(values).sort();
+                sorted.forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    sel.appendChild(opt);
+                });
+            }
+
+            populateSelect('filter-type', typeSet);
+            populateSelect('filter-severity', sevSet);
+            populateSelect('filter-cwe', cweSet);
+
+            // Show initial count
+            updateCount(rows.length, rows.length);
+        })();
+
+        function applyPassiveFilters() {
+            const typeVal = document.getElementById('filter-type').value;
+            const sevVal  = document.getElementById('filter-severity').value;
+            const cweVal  = document.getElementById('filter-cwe').value;
+
+            const table = document.getElementById('passive-findings-table');
+            const rows  = table.querySelectorAll('tbody tr');
+            let visible = 0;
+
+            rows.forEach(row => {
+                const matchType = !typeVal || row.getAttribute('data-type') === typeVal;
+                const matchSev  = !sevVal  || row.getAttribute('data-severity') === sevVal;
+                const matchCwe  = !cweVal  || row.getAttribute('data-cwe') === cweVal;
+
+                if (matchType && matchSev && matchCwe) {
+                    row.classList.remove('pf-row-hidden');
+                    visible++;
+                } else {
+                    row.classList.add('pf-row-hidden');
+                }
+            });
+
+            updateCount(visible, rows.length);
+        }
+
+        function resetPassiveFilters() {
+            document.getElementById('filter-type').value = '';
+            document.getElementById('filter-severity').value = '';
+            document.getElementById('filter-cwe').value = '';
+            applyPassiveFilters();
+        }
+
+        function updateCount(visible, total) {
+            const el = document.getElementById('filter-count');
+            if (visible === total) {
+                el.textContent = 'Showing all ' + total + ' findings';
+            } else {
+                el.textContent = 'Showing ' + visible + ' of ' + total + ' findings';
+            }
+        }
+        </script>
         {% endif %}
 
     </div>
